@@ -1,0 +1,47 @@
+# The game's data: made on the player's machine from their own cartridge
+# image, by the game's first start (or hz/hz_assets). None of it is ever
+# committed. These five files are the port's own and are kept.
+/hz/assets/*
+!/hz/assets/README.md
+!/hz/assets/data/
+/hz/assets/data/*
+!/hz/assets/data/repair.json
+!/hz/assets/data/turrets.json
+!/hz/assets/sound/
+/hz/assets/sound/*
+!/hz/assets/sound/q_drums.json
+!/hz/assets/maps/
+/hz/assets/maps/*
+!/hz/assets/maps/path_hints.png
+
+# No disassembly: the game reads the image itself, through hz/hz.sym.
+/hz/asm/
+
+# Cartridge and disc images, and archives that could hold one.
+*.bin
+*.md.zip
+*.smd
+*.gen
+*.32x
+*.sms
+*.gg
+*.iso
+*.cue
+*.chd
+*.zip
+*.7z
+*.rar
+
+# What the build, the checks and the game write (hz/.gitignore has the rest).
+build/
+dist/
+*.o
+*.exe
+*.dll
+*.log
+__pycache__/
+/hz/saves/
+/hz/mods/
+
+# A sync that stopped halfway keeps the player's folders here.
+/.sync-kept/

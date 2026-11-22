@@ -1,0 +1,17 @@
+# Line endings and binaries, the same on every machine (as PS2's build
+# 142b): text is LF in the repository and in every checkout -- on Windows
+# too, where Git for Windows would otherwise check text out with CRLF,
+# MSYS2's git then sees every file changed and bash refuses a CRLF script --
+# and these are never touched as text.
+* text=auto eol=lf
+*.png   binary
+*.bin   binary
+*.lzw   binary
+*.spv   binary
+*.dxil  binary
+*.wav   binary
+*.vgm   binary
+*.raw   binary
+*.ico   binary
+*.zip   binary
+*.gz    binary

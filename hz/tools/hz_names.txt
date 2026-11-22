@@ -1,0 +1,2692 @@
+; Herzog Zwei (USA, Europe) -- label names for hzdis.py
+;
+; hzdis.py reads this file and uses the names in hz.lst and asm/hz.asm.
+; Every name here was given after reading its routine in full; a note that
+; starts with "?" is a best reading that still needs checking.
+;
+;   $ADDR  Name            ; note          ROM label (code or data)
+;   $ADDR  v_name          ; note          RAM variable ($E00000 and up)
+;   +$OFF  prefix_name     ; note          structure field (equate only)
+;   $ADDR  .name           ; note          local label (branch target)
+;
+; ROM names replace sub_/loc_/tbl_/dat_ labels; a name at an address that
+; has no label yet adds one (data tables). RAM names become equates at the
+; top of hz.asm, written as $FFFFxxxx so (name).w assembles as today; abs.l
+; operands use (name&$FFFFFF).l so their bytes stay $00FFxxxx.
+; Symbols must be unique ignoring case (AS).
+;
+; A .name belongs to the global label before it in the source (AS composes
+; it as Parent.name), so .loop can recur in every routine. Only the routine
+; it belongs to may use it: hzdis.py stops if anything else does, or if an
+; unnamed loc_ label between splits the routine. Name a routine's branch
+; targets together, once it has been read in full.
+
+; ===========================================================================
+; Boot, exceptions, entry table
+
+$000200  EntryPoint            ; reset: TMSS, cold/warm RAM clear, then Boot_Continue
+$000270  Exc_Vector2           ; one moveq #n,d0 / bra per exception, n = 2..11
+$000274  Exc_Vector3
+$000278  Exc_Vector4
+$00027C  Exc_Vector5
+$000280  Exc_Vector6
+$000284  Exc_Vector7
+$000288  Exc_Vector8
+$00028C  Exc_Vector9
+$000290  Exc_Vector10
+$000294  Exc_Vector11
+$000298  Exc_Unhandled         ; d0 = -1; every other unused vector points here
+$00029A  Exc_Halt              ; move #$2700,sr forever
+$000300  j_Shot_FireBullet     ; entry table: the $53000/$5D000 modules call through these
+$000304  j_Shot_FireMissile
+$000308  j_Obj_GetBlockedSides
+$00030C  j_Stub_2142
+$000310  j_Map_GetPathHint
+$000314  j_Obj_DirectionTo
+$000318  j_GetDirection
+$00031C  j_GetDirectionAndDist
+$000320  j_Grid_ScanAroundMech
+$000324  j_Grid_ScanAroundObj
+$000328  j_Unit_SetSprite
+$00032C  j_Stub_E4E
+$000330  j_Stub_E50
+$000334  j_DebugPrintHex
+$000338  j_LZW_Unpack
+$000380  ChecksumCheck         ; sum words $200-$7FFFF vs header; mismatch: "ROM ERROR" and hang
+$00038E  .sum_loop             ; 4 words per pass, $FFC0 passes: $200-$7FFFF
+$0003A4  ChecksumFail          ; interrupts off, font and palette line 1 up, print "ROM ERROR", hang
+$0003D2  .font_loop            ; FontTiles -> VRAM $D620, $278 longs
+$0003E6  .palette_loop         ; GamePalettes -> CRAM $20 (line 1), 8 longs
+$0003FE  .hang                 ; bra.s to itself; the rts after it ($400) is never reached
+$000402  Boot_Continue         ; d7 = version byte; checksum, Z80 driver, pads
+$00041C  MainLoop_Title        ; outer loop: title/menus ($53000), set up, load map, play
+$000478  .clear_ram            ; $FF7000-$FFEFFF cleared before every game (scroll, cameras, mechs, units, queues); $FFF000 up survives
+$000486  Game_SetupMode        ; from the menu options at v_options (or the demo table)
+$0004D0  .check_mode5          ; mode 6 (wide, P1 CPU) has hidden P1; mode 5 (wide, P2 CPU) hides P2
+$0004DA  .store_views          ; v_view_cfg (P1, P2), player flags, v_mech_option2
+$000514  Game_SetViewCameras   ; v_view_camera_a/b: split 1 and 2; wide: the shown player's camera for both
+$000534  .camera2
+$000536  .store
+$000544  Demo_SetupNext        ; attract mode: next DemoTable entry
+$000598  DemoTable             ; 16 x 8: word map, word split flag, long -> v_view_cfg
+$000618  Demo_Start            ; spawn the demo's units, prime the input run counters
+$000634  Game_Start            ; per-game init, then Game_FrameLoop
+$00067E  .not_demo
+$000694  .check_replay         ; record mode 1/3: v_free_ammo
+$0006AC  .new_game             ; seed from v_rng_seed_saved, CPU start units
+$0006BC  .screen               ; HQ-HP boost threshold, sprites, mechs, views, fade in
+$000700  Game_FrameLoop        ; one pass per frame; never returns (exits by jmp)
+$000704  Game_FrameLoopEntry   ; Game_Start enters here, past ReadJoypads (it has cleared v_joypad1)
+$000728  .after_units          ; record modes 1/3 skip UnitAI_Update and Combat_Update
+$0007B8  IntStubs_Install      ; build jmp stubs at $FFF800: L4 -> HBlank, L6 -> VBlank
+$000808  Game_SecondTick       ; 1 s timer (0..$3B), income, HQ-destroyed check, demo timeout, v_rng_seed_saved, v_cpu_boost
+$000818  .timer_ok             ; d1 = 50000, the money cap; timer $3B: P2's income, $3A: P1's
+$00084A  .p1_add_income        ; (outposts + 1) x 4, doubled in a demo
+$000854  .p1_store_money       ; capped at 50000; record mode 1: 50000
+$000866  .p1_income_done
+$000868  .p2_income            ; P2's outposts: v_outpost_count_p2
+$000884  .p2_add_income
+$00088E  .p2_store_money
+$0008A0  .check_hqs            ; P1's HQ at 0 HP first: P2 wins; then P2's HQ
+$0008B4  .p1_wins              ; v_winner 0: the return address dropped, interrupts off, jmp Game_Over
+$0008C6  .p2_wins              ; v_winner 1
+$0008DA  .hqs_standing         ; demo: to MainLoop_Title once v_frame_counter_lo reaches $E10 (60 s; Start in Game_CheckPause sets $FF00)
+$0008F2  .save_seed            ; not a demo: v_rng_seed_saved = v_rng_seed, every frame
+$0008FC  .check_boost          ; not on the second's first frame (timer 0); only with exactly one CPU mech (obj_flags b0), else off
+$000964  .p2_is_cpu            ; P2's HQ under v_cpu_boost_hq_hp, P1 on 5+ outposts or 25+ units, or 40 minutes ($23280 frames): $8010
+$000984  .boost_off
+$00098C  .boost_p1_cpu         ; P1 CPU: $8000 (same tests on P1's HQ and P2's counts)
+$000996  .boost_p2_cpu         ; P2 CPU: $8010
+$0009A0  .done
+$0009A2  VDP_Init              ; registers from VDPInitRegs, clear VSRAM/CRAM, DMA-fill VRAM
+$0009C6  .regs                 ; VDPInitRegs -> registers $80-$92
+$0009D8  .window_h_set         ; split screen keeps $9189: window over cells 18-39
+$0009F6  .cram                 ; clear CRAM, 64 words (VSRAM 0/2 cleared just before)
+$000A04  .vsram                ; clear VSRAM, 40 words
+$000A34  .wait_dma             ; DMA fill of all 64 KB of VRAM with 0
+$000A54  VDPInitRegs
+$000A7A  VDP_DisplayOn         ; reg 1 = $64 (display, VInt, mode 5)
+$000A8C  VDP_DisplayOff        ; reg 1 = $24
+$000ABE  VDP_WaitVBlank        ; if the display is on: wait for the start of VBlank
+$000ACA  .wait_end             ; while in VBlank
+$000AD6  .wait_start           ; until the next VBlank
+$000AE4  VDP_WaitVBlankEnd     ; if the display is on: wait until VBlank is over
+$000AFE  IO_Init               ; pad ports: TH as output
+$000B06  .wait_bus             ; Z80 bus request: wait until granted
+$000B30  ReadJoypads           ; -> v_joypad1/2, active high: S A C B R L D U (3-button pad: TH 1 reads C B R L D U, TH 0 Start A)
+$000B3C  .wait_bus             ; Z80 bus request: wait until granted
+
+; ===========================================================================
+; Text and numbers
+
+$000BC2  PrintInline           ; inline: plane (0 A, 1 B, 2 window), x, y, text; font tiles $A600+
+$000C40  TextBuf_SetInline     ; inline: plane, x, y, text -> v_textbuf
+$000C68  TextBuf_Print         ; print v_textbuf
+$000CDC  PrintChars            ; d4+1 chars from (a1); d1 plane, d2 x, d3 y
+$000D46  PrintChar             ; char d0; d1 plane, d2 x, d3 y
+$000DA8  NumToDec5             ; d0 -> 5 chars at (a0), leading zeros as spaces
+$000DD4  NumToDec_Digit        ; one digit of NumToDec5 (d1 = power of ten)
+$000DF2  NumToDec2             ; d0 -> 2 digits at (a0)
+$000E2E  ByteToHex             ; d0.b -> 2 hex chars at (a0)+
+$000E36  NibbleToHex           ; d1 low nibble -> 1 hex char at (a0)+
+$000E4E  Stub_E4E              ; rts
+$000E50  Stub_E50              ; rts
+$000E52  DebugPrintHex         ; d0.b as hex at x d1, y d2 on the window plane
+$000EA0  Random                ; d0 = next value; seed v_rng_seed (0 -> $2A6B365A)
+$000EB2  .step                 ; s x 41 = H:L; new seed (H + L):L; d0 = s's high word : (H + L)
+
+; ===========================================================================
+; Shots, units, collision grid
+
+$000ED2  Shot_FireBullet       ; a0 shooter; d1 flags (b7, b4 team; b3 a unit's shot: hits the other side only, and HQs), d2 dir, d3/d4 x/y, d5 speed, d6 life: the first free of the team's 24 bullets, a round from obj_ammo (none: d0 -1, ammo kept at 0); flags b2 while the shooter's +$D (mech_altitude) isn't 0; attr $254C (+1 team 2, +$8002 from the air); owner +$1C; power = obj_power, x 1.5 for the boosted CPU's side on A/B, x 1.5 (C) / x 2 (D) for a CPU's side against a human, saturating at $FF; velocity; sfx 0/1 a mech (robot/jet), 2 a unit on screen (b6), none for one off screen. d0 0 fired
+$000EE8  .slots_set
+$000EEA  .find_slot            ; b7 clear: free; none: d0 -1
+$000EFE  .slot_found           ; a round: obj_ammo - 1; none left: kept at 0, d0 -1
+$000F0E  .clear_slot           ; the record cleared, 8 longs
+$000F12  .clear_loop
+$000F24  .store                ; flags (b2 from the air), dir, x, y, speed, life
+$000F46  .air_attr
+$000F50  .store_attr           ; attr, owner a0; d0 = obj_power
+$000F84  .boost_done
+$000F86  .difficulty_cd        ; C/D: x 1.5 / x 2 when the shooter's side is a CPU and the other a human
+$000F9A  .sides_set            ; a2 the shooter's side's mech, a3 the other
+$000FB8  .c_boost_done
+$000FBA  .difficulty_d
+$000FC2  .store_power          ; power; Shot_SetVelocity; sfx by shooter
+$000FDE  .mech_sfx             ; shooter size $20, a mech: sfx 0 robot, 1 jet
+$000FE8  .sfx
+$000FEE  .done
+$000FF4  Shot_FireMissile      ; as Shot_FireBullet for the team's 8 missiles, a round from obj_missiles, flags b2 always; attr $A550 (+$10 team 2); power = obj_power x 3 as a byte (wraps), then the same boosts (the shooter's team bit); sfx 3
+$00100A  .slots_set
+$00100C  .find_slot
+$001020  .slot_found           ; a round: obj_missiles - 1; none left: kept at 0, d0 -1
+$001030  .clear_slot
+$001034  .clear_loop
+$001064  .store_attr           ; attr, owner; d0 = obj_power x 3 (byte)
+$0010A0  .boost_done
+$0010A2  .difficulty_cd
+$0010B6  .sides_set
+$0010D4  .c_boost_done
+$0010D6  .difficulty_d
+$0010DE  .store_power          ; power; Shot_SetVelocity; sfx 3
+$0010EE  .done
+$0010F4  Shot_SetVelocity      ; a1 shot: +$10/+$12 and +$14/+$16 = SineTable[d2 & $F] x speed (+6), the low words of the products. Changes d0-d2/a2
+$00111E  Combat_Update         ; Shots_UpdateTeam for team 1's shots (enemy v_mech2), then team 2's (v_mech1); then Units_UpdateTeam for team 1 on an even v_unit_team_toggle, team 2 on an odd one; the toggle + 1
+$001176  .update_units
+$001182  Units_UpdateTeam      ; a0 slots, a1 count, a5 per-type counts, d5 grid id base
+$0014A4  Shots_UpdateTeam      ; a0 a team's 24 bullets, then its 8 missiles; a3 the enemy mech, a2 SineTable. Bullets: the owner (+$1C) not active-and-alive sets b0 for good; life - 1 (0: explode); the 8.8 move by +$14/+$16; from the air (b2) only the enemy mech as a jet within [x, x + $18) on both axes, knocked by the velocity / 4; on the ground Shot_CheckHit (terrain event: Obj_TerrainEvent d0 3; an object; b1 a tile). A hit object not dying: +$22 = $80 | dir, HP - power, sfx 7 (8 at size $20); past 0: b5, HP $180 sfx 4 (mech) or $10 sfx 5 (unit; INFANTRY 6; FWA: x/y - 4, size $A00, ExplosionFrames[0]). Then the owner's hit victim (+9: slot + 1 (+ $32 team 2), or $64/$65), and unless b0 its +$22 b6. In flight: the owner's +$22 b5; stopped (object, or a tile: sfx 9) or out of life: an explosion (b5, life 4, x/y - 4, the owner's b5 cleared), attr $A580 + frame x 4, freed after 4 frames. Missiles: life - 1; homing (the enemy alive): every 4th frame aimed (GetDirection) at its (x + $C, y + $C), velocity steps of $40 a frame per axis towards the aim, heading a step towards it; each sets bit (dir + 8) & $F of the enemy's mech_missile_dirs (written every call). Hit: the enemy mech alive, any form, within (x, x + $18) on both axes: knocked by the whole velocity, HP - power (sfx 8; past 0: b5, HP $180, sfx 4). Explosion attr $2580 + frame x 4
+$0014B0  .bullet               ; b7 clear: next; b5: .exploding
+$0014D2  .owner_checked        ; life - 1; 0: b5, .explode
+$0014E0  .move                 ; 8.8 by +$14/+$16; from the air (b2): the enemy mech as a jet in [x, x + $18) on both axes, knocked by the velocity / 4, d0 = its grid id
+$001562  .air_hit              ; a1 the enemy mech, d1 = 1 (an object)
+$00156A  .ground               ; Shot_CheckHit; a terrain event: Obj_TerrainEvent (d0 3)
+$001580  .check_object         ; b0: Obj_FromGridId
+$001598  .hit                  ; a1 the object, d0 its grid id. Dying: nothing more; else +$22 = $80 | dir, HP - power
+$0015CA  .hurt_sfx             ; sfx 7, 8 at size $20 (a mech)
+$0015D2  .destroyed            ; a mech: HP $180, sfx 4; a unit (d0 b6): HP $10, sfx 5 (INFANTRY 6)
+$0015F0  .check_fwa            ; FWA: x/y - 4, size $A00, ExplosionFrames[0]
+$00160C  .mark_destroyed       ; b5, HP
+$00161E  .tell_owner           ; owner not gone (b0): its +$22 b6; a unit hit: victim slot + 1 (+ $32 team 2)
+$00163E  .unit_victim
+$001640  .mech_victim          ; a mech hit, or the owner gone (whatever was hit): $64, $65 with d0 b7
+$00164A  .p1_victim
+$00164E  .store_victim         ; the owner's +9, even when it is gone
+$001652  .hit_done
+$001654  .check_stop           ; no object or tile: the owner's +$22 b5 (unless gone), next
+$001668  .stopped              ; a tile: sfx 9
+$001674  .explode              ; owner not gone: its +$22 b5 cleared
+$001680  .explode_set          ; b5, life 4, x/y - 4
+$001694  .exploding            ; life - 1; 0: freed (flags 0)
+$00169E  .explosion_frame      ; attr $A580 + (4 - life) x 4
+$0016B0  .next_bullet          ; after 24: the missiles, d5 = 0, a4 = $18
+$0016C8  .missile              ; b5: .missile_exploding; b7 clear: next; life - 1 (0: explode)
+$0016F0  .homing               ; the enemy alive: life & 3 isn't 0: keep the heading; mark bit (dir + 8) & $F
+$00170E  .aim                  ; GetDirection to the enemy's (x + $C, y + $C); mark; +$14/+$16 = speed x SineTable[it]
+$00174C  .steer                ; the velocity a step of $40 per axis towards +$14/+$16 (to it when closer)
+$001768  .x_up
+$001772  .steer_y
+$00178A  .y_up
+$001794  .store_velocity       ; the heading a step towards the aim
+$0017AE  .turn_left
+$0017B0  .turn
+$0017BA  .missile_move         ; 8.8 by +$10/+$12; attr $A550 + dir (+$10 team 2); hit: x and y each above the enemy's by 1 to $17, the enemy alive
+$0017FE  .missile_attr
+$001846  .mech_destroyed       ; b5, HP $180, sfx 4
+$001856  .missile_explode      ; b5, life 4, x/y - 4
+$00186C  .missile_exploding    ; life - 1; 0: freed
+$001876  .missile_frame        ; attr $2580 + (4 - life) x 4
+$001888  .next_missile         ; after 8: the enemy's mech_missile_dirs = d5
+$001894  Grid_ClearObj         ; clear a0's cell in v_grid
+$0018AC  Grid_MarkObj          ; write id d5 into a0's cell of v_grid; cell -> $2E(a0)
+$0018E6  Obj_FromGridId        ; grid id d0 -> a1: b6 clear a mech (b7 P2); b6 set slot (d0 - 1) & $3F of team b7's units (d0 changed)
+$0018F8  .mech2
+$001900  .unit
+$00190C  .team2
+$001912  .slot                 ; a1 + ((d0 - 1) & $3F) x $50
+$001924  Unit_CheckObjCollision ; occupied neighbour cells -> v_hit_flags / v_hit_id
+$001B50  Obj_CheckTerrain      ; tiles under a0: map edge, blocking, terrain event -> v_terrain_event
+$001C72  Unit_CheckSpawnBlocked ; a0 new unit: v_hit_flags b0 object (v_hit_id_lo), b1 tile; changes a4/a6 (not saved)
+$001CE2  .next_neighbour       ; GridNeighbourOffsets: the 8 cells round its centre's
+$001CE4  .neighbour            ; the first pass takes the centre cell again (offset 0, already known empty)
+$001D0E  .unit                 ; grid id b6: unit slot id - 1 (& $3F), b7 team 2
+$001D16  .unit_slot
+$001D28  .overlap              ; per axis: the one further right/down starts within the other's obj_size
+$001D42  .other_left           ; the other starts left of it: overlap if -dx < the other's size
+$001D4C  .check_y
+$001D5E  .other_above
+$001D68  .overlap_result       ; both axes: blocked
+$001D6E  .skip
+$001D74  .blocked              ; v_hit_flags b0, v_hit_id_lo = the id; the tile test still runs
+$001D82  .tiles                ; from tile (x+4, y+4)/8: 3 x 3 tiles for types below 8, 2 x 2 for INFANTRY and FWA
+$001D9E  .tile_area
+$001DAC  .tile_row
+$001DB0  .tile                 ; layout block (wrapping at 256 tiles), then the block's tile word
+$001DF0  .water_unit           ; obj_flags b0 (ST-57U): blocked unless the tile has b9
+$001DF6  .tile_blocked         ; v_hit_flags b1; stop
+$001E00  .next_tile            ; others: blocked by tile b15
+$001E0C  .done
+$001E12  Shot_CheckHit         ; a0 shot: v_hit_flags/v_hit_id and v_terrain_event cleared. Point (x + 4, y + 4): its v_grid cell, then the 8 round it (cells past $FFF skipped; rows not wrapped): the first occupant the shot may hit (b3 clear: any unit and the other side's mech; b3 set: the other side only) with the point inside (x, x + size) on both axes -> b0, v_hit_id_lo. The tile under the point: v_terrain_event2 its layout offset; b14 -> b1 (stops shots); b13 -> b2 and v_terrain_event = its block's terrain
+$001E6C  .next_cell            ; GridNeighbourOffsets
+$001E6E  .cell                 ; off the grid ($1000 up, unsigned) or empty: skip
+$001E9C  .unit                 ; d6 8 (team 1), $18 (team 2)
+$001EA8  .unit_slot
+$001EBA  .sides                ; d6 (team b4, unit b3) ^ the shot's b4/b3: 0 skip; shot b3: the other side only
+$001ED4  .overlap              ; point inside (x, x + size) and (y, y + size)
+$001EF6  .skip
+$001EFC  .hit                  ; v_hit_flags b0, v_hit_id_lo the id
+$001F0A  .tile                 ; the tile under the point (wrapping at 256 tiles): v_terrain_event2 = its layout offset
+$001F76  .check_event          ; b13: b2, v_terrain_event = v_block_terrain[block]
+$001F8E  .done
+$001F94  Obj_GetBlockedSides   ; d0 bits: 1 up, 2 right, 4 down, 8 left blocked by tiles
+$0020F2  Map_TileIsBlocked     ; tile d3/d4 (8-px units): Z clear if it blocks
+$002142  Stub_2142             ; rts
+$002144  Map_GetPathHint       ; layout word under a0: bit 9 -> d0 = 1, d2 = direction (0-$E) towards the enemy HQ for a0's team, d1 the other's (bits 13-15 team 1, 10-12 team 2)
+$0021A4  Obj_DirectionTo       ; direction 0-$F from a0 to d1/d2
+$0021B8  GetDirection          ; direction 0-$F from d3/d4 to d1/d2: dx 0: 8 (dy >= 0) or 0; dy 0: 4 or $C; else (dy x 16 / |dx|, negated for dx < 0) against DirSlopeTable (+ 8 for dx < 0)
+$0021CE  .vertical
+$0021DA  .slope                ; dy x 16 / |dx| (negated with dx < 0); divs overflowing leaves dy x 16
+$0021E8  .divide
+$0021F6  .slope_loop           ; d0 = the DirSlopeTable entries below the slope
+$002200  .slope_found          ; dx < 0: + 8
+$002206  .mask
+$00220A  .done
+$002210  DirSlopeTable
+$002220  GetDirectionAndDist   ; also d1 = the larger of |dx| and |dy|
+$002244  Grid_ScanAroundMech   ; Grid_ScanRings around a0's centre (+$10)
+$002260  Grid_ScanAroundObj    ; Grid_ScanRings around a0's centre (size / 2)
+$002280  Grid_ScanRings        ; d0 rings of v_grid around d1/d2 -> v_scan_list, v_scan_counts
+$0022E0  Grid_ScanRingRow
+$002312  Grid_ScanRingColumn
+$002344  Unit_SetSprite        ; a0 unit, d2 team palette: heading a step towards unit_turn_to, target velocity, sprite attr and turret overlay from UnitDirTable
+$002372  .turn                 ; (turn_to - heading) & $F: 1-7 -> +1, 8-$F -> -1; cmp.w, so a caller leaving d0 >= $100 always gets -1 (Unit_Spawn: types 8/9, harmless: it asks for $F)
+$00237C  .turn_back
+$00237E  .set_velocity         ; also with no turn when unit_speed's low byte isn't unit_prev_speed: obj_target_vel_x/y = unit_speed x SineTable[heading (+ 8 with obj_flags b1)]
+$00239A  .heading_set
+$0023B4  .sprite               ; attr = UnitDirTable[type][heading] | d2
+$0023D8  .infantry             ; tile $400 + (unit_aim_dir & $F) x 4 | d2, + $40 on an odd unit_tick while unit_speed isn't 0
+$002400  .infantry_set
+$002404  .turret               ; unit_turret b7: unit_turret_dir a step towards unit_aim_dir (same rule), overlay attr = UnitDirTable[turret & $7F][turret_dir] | d2
+$002422  .turret_back
+$002424  .turret_turn
+$002448  .done
+$00244A  UnitDirTable          ; 32 bytes per type: 16 directions, tile | flip bits
+$00258A  ExplosionFrames       ; 6 sprite attrs, 3x3, tiles $510-$53D
+$0025AA  SineTable             ; 16 directions x (sin, cos) words
+$0025EA  GridNeighbourOffsets  ; 8 word offsets around a v_grid cell
+
+; ===========================================================================
+; Sound (Z80 mailbox at Z80 $0003)
+
+$0025FA  Snd_Init              ; load the Z80 driver from $20B00, run it, send $0A/$07/$08
+$002662  Snd_SetBank             ; command $0A, long d0
+$00268C  Snd_SetSong             ; command $07, word d0
+$0026AE  Snd_SetSfxTable             ; command $08, word d0; clears the sfx queue
+$0026DC  Snd_StartSong             ; command $01, byte d0 (map loader sends -1)
+$0026F8  Snd_PlayMusic         ; command $09, word d0 (map loader sends map + 3)
+$00271E  Snd_FadeMusic             ; command $03, byte d0, 0
+$00273C  Snd_Pause             ; command $0C, byte d0, 0 (pause toggles it)
+$00275A  Snd_QueueSfx          ; queue sfx d0 if its SfxPriority value <= the queued one's
+$002776  .done                 ; a lower (or equal) SfxPriority value is already queued
+$002796  Snd_FlushSfx          ; send the queued sfx (command $02) once per frame
+$0027D6  Snd_StopSfx             ; command $04
+$002806  Z80_WaitMailbox       ; take the bus until the mailbox is 0; returns holding the bus
+$00282C  Z80_TakeBusTestMailbox ; take the bus, flags = mailbox byte
+$002848  Z80_WaitMailboxSlow   ; as Z80_WaitMailbox, with a delay between polls
+$0028C4  Snd_StopIfBusy        ; if the driver is busy: command $06
+$009931  SfxPriority           ; one byte per sfx, lower wins; $FF unused
+
+; ===========================================================================
+; LZW (ARC method 8) -- see src/core/hz_lzw.c
+
+$002978  LZW_ClearPrefix
+$00298A  LZW_Unpack            ; a0 source, a1 destination, d0 packed length
+$002B34  LZW_GetCode
+$002C90  LZW_PutcNcr           ; ARC RLE90 output
+$002CF6  LZW_RMask
+
+; ===========================================================================
+; Player mechs
+
+$002D00  Mechs_Init            ; P1 here, P2 via Mech2_Init: view, camera, money, stats
+$002D5C  .place                ; split: camera = HQ - ($48,$60); wide: HQ - ($A0,$60)
+$002D9E  .shown                ; home camera/screen (mech_home_*), radar map mode, 1000 money, AI move 11, menu step 9, Mech_Respawn, full fuel
+$002DD0  Mech2_Init
+$002E28  .place                ; as Mechs_Init.place
+$002E6A  .shown
+$002E9C  Mech_Respawn          ; reset a0 to jet form (altitude $10) with KIDOU stats (fuel 1/4); count the (re)spawn
+$002EC8  .fuel_use_set         ; KIDOU +$24, +1 for a human whose rival (a1) is a CPU
+$002F1C  .count_spawn          ; v_mech_spawns + 1 for its team, saturating
+$002F24  .done
+$002F26  HUD_UpdateGauges      ; redraw the HP/HQ/ammo/fuel bars that changed: per mech HP / 8 (0 destroyed) and its HQ's HP / 32 on 8 cells, ammo / 4 and fuel / 64 on 6; a bar is queued (HUD_QueueBar) when its value isn't the one last shown (mech_*_shown)
+$002F40  .p1_hp                ; d1 = P1's HP / 8, 0 if destroyed
+$002F58  .p1_hq
+$002F76  .p1_ammo
+$002F96  .p1_fuel
+$002FB4  .p2                   ; the same for P2, a1 = v_hq2
+$002FCE  .p2_hp
+$002FE6  .p2_hq                ; bra.w HUD_QueueBar, not bsr.w: a frame that queues P2's HQ bar returns from there, so P2's ammo and fuel bars wait for the next frame
+$003004  .p2_ammo
+$003024  .p2_fuel
+$003042  .done
+$003044  Mechs_Update          ; both mechs: input, logic, camera
+$003074  .p1_store_pad         ; P2 a CPU: P2's pad steers P1 too
+$003078  .p1_update            ; P1 a CPU: AI_MechThink (in Mech_Update) writes mech_pad
+$0030A8  .p1_check_menu        ; order menu open: the camera moves the saved scroll (mech_menu_scroll_x/y)
+$0030BA  .p1_camera
+$0030C4  .p1_production        ; mech_menu_closing: camera left alone
+$0030F8  .p2_store_pad
+$0030FC  .p2_update
+$00312C  .p2_check_menu
+$00313E  .p2_camera
+$003148  .p2_production
+$003156  Mech_UpdateProduction ; ordered unit being built: count mech $60 down, then ready ($4F = 2, sfx $12)
+$003170  .done                 ; not building, or mech_prod_timer still counting (it is ready the frame it goes below 0)
+$003172  Mech_UpdateCamera     ; a4 camera, a2/a3 scroll x/y: move both by mech_cam_dx/dy, clamped to the map (the rest moves the mech on screen); clamp obj_x/y to 0-$7E0, bouncing
+$003192  .cam_x_past_right     ; split: camera x 0-$770 (the view is $90 wide)
+$003198  .cam_x_excess         ; what the camera can't take moves mech_screen_x
+$00319C  .move_cam_x
+$0031B8  .x_past_right         ; obj_x $7E0, mech_screen_x $70
+$0031BE  .bounce_x             ; obj_vel_x = -obj_vel_x / 2
+$0031CA  .store_x
+$0031EA  .cam_y_past_bottom    ; camera y 0-$740 (the view is $C0 high)
+$0031F0  .cam_y_excess
+$0031F4  .move_cam_y
+$003212  .y_past_bottom        ; obj_y $7E0, mech_screen_y $C0 (y 0: $20, the HUD strip)
+$00321A  .bounce_y
+$003226  .store_y
+$003230  .wide                 ; camera x 0-$6C0 ($140 wide); a hidden view's scroll isn't moved
+$003246  .wide_cam_x_past_right
+$00324C  .wide_cam_x_excess
+$003250  .wide_move_cam_x
+$00325A  .wide_clamp_x
+$003272  .wide_x_past_right    ; mech_screen_x $120
+$00327A  .wide_bounce_x
+$003286  .wide_store_x
+$0032A6  .wide_cam_y_past_bottom
+$0032AC  .wide_cam_y_excess
+$0032B0  .wide_move_cam_y
+$0032BC  .wide_clamp_y
+$0032D4  .wide_y_past_bottom
+$0032DC  .wide_bounce_y
+$0032E8  .wide_store_y
+$0032F2  Mech_Update           ; mech a0 (rival a1) for a frame: CPU think; dying: fly home, respawn; buttons (C menu, A take off/land/lift/drop, B fire); steer, speed, velocity, move, collide; fuel; frame; screen lead
+$003302  .not_cpu              ; destroyed (obj_flags b5): .dying
+$003312  .dying                ; menu closing: nothing. HP - 1: 0 -> .respawn; at $A sfx $1B
+$003328  .fly_home             ; speed 0; mech_form cycles 0-2 (the debris); the camera of its team (b4)
+$00333A  .store_form
+$003350  .home_x               ; mech_cam_dx: towards mech_home_cam_x, 8 px at most; obj_x moves with it
+$00335C  .home_x_dist
+$003362  .home_x_check
+$00336A  .home_x_move
+$003380  .home_y_dist
+$003386  .home_y_check
+$00338E  .home_y_move
+$0033A4  .home_screen_x        ; mech_screen_x one step towards mech_home_screen_x, obj_x with it; the same for y; Mech_ClearHomePad
+$0033AA  .home_screen_x_move
+$0033C0  .home_screen_y
+$0033C6  .home_screen_y_move
+$0033D6  .respawn              ; carrying: the carried unit's record freed (its flags byte 0) and v_unit_count - 1
+$0033FA  .free_carried
+$00340C  .respawn_now          ; destroyed bit cleared, Mech_Respawn
+$003418  .alive                ; order menu closing: nothing
+$003420  .buttons              ; d1 = buttons newly pressed; order menu open: OrderMenu_Input and no direction (d0 -1)
+$003442  .check_c              ; C: open the order menu (obj_flags b6)
+$00344E  .check_a              ; a4 = UnitStats_KIDOU. A, robot: take off unless on the rival (Mechs_Overlap) or on terrain 3: form 1, KIDOU +$21 speed, +$24 fuel use (+1 human vs CPU), velocities 0, mech_transform $13 (delay 6), turn to the heading from 0; sfx $A
+$00349A  .take_off_fuel
+$0034C0  .jet_a                ; jet: an own unit under it is lifted; else land on terrain 0/1 with the cell free: form 0, KIDOU +$20 speed, +$23 fuel use, speed 0, mech_transform $8D (delay 6); sfx $B
+$003512  .lift                 ; mech_carried_slot/_order, both b3, form 2, KIDOU +$22 speed, +$25 fuel use (+1 human vs CPU)
+$003542  .lift_fuel            ; halved: not a demo, a CPU in the game, difficulty A
+$00355E  .lift_store           ; the unit leaves the grid (Grid_ClearObj); sfx $C
+$003572  .jet_a_done
+$003578  .drop                 ; carrying: the cell free (Mech_CheckLandBlocked) and the terrain right (Mech_GetTerrain)
+$003598  .drop_check_terrain   ; ST-57U: water only (4); others 0, or 1 for a human
+$0035C2  .drop_boat
+$0035CA  .drop_ok              ; form 1; the unit placed centred under the mech with its order and speed, heading = the mech's + 1 (turning back one step), fields $38-$4F cleared
+$0035E8  .drop_store_fuel
+$003670  .clear_unit_fields
+$00368C  .drop_mark            ; grid id, Unit_SetSprite, Obj_CheckTerrain -> unit_blocked; sfx $D
+$0036C6  .check_b              ; no A: B fires (Mech_FireGun)
+$0036D4  .pad_dir              ; d0 = JoyToDir[pad]: 0-$E, $FF none
+$0036E8  .steer                ; transforming: no steering. No direction: speed - 4 (to 0), mech_lead and mech_dir_held 0
+$003700  .slow_done
+$00370C  .dir                  ; mech_turn_to = it; the heading turns every 4th v_mech_tick
+$003732  .turn                 ; robot held under $10 frames: the opposite heading reverses (obj_flags b1, no turn), 7 and 9 turn one step reversing, others one step forward
+$00374E  .robot_not_opposite
+$00375C  .robot_check_left
+$00376A  .robot_near_opposite
+$003778  .robot_reverse_cw
+$003780  .turn_jet             ; jet, or held $10+ frames: one step the short way (under 8: +1, going forward); from 8 up -1, b1 left as it is
+$00378E  .turn_ccw
+$003790  .apply_turn
+$00379C  .speed                ; +6 while the heading (+8 reversing) is mech_turn_to, else -4 (and mech_lead 2 -> 1)
+$0037AA  .speed_heading
+$0037C4  .speed_add
+$0037CC  .speed_cap            ; not below 0; capped at mech_max_speed, a quarter with no fuel
+$0037D8  .speed_cap_check
+$0037DE  .store_speed          ; the speed word's low byte; mech_pad_last = pad; mech_dir_held + 1 (to $80), 0 when the pad's direction bits change
+$0037F8  .held_check
+$003808  .velocity             ; transforming: velocities 0
+$00381C  .target_vel           ; obj_target_vel_x/y = the low words of speed x SineTable[heading (+8 reversing)]
+$00382A  .target_vel_calc
+$00384E  .move                 ; old position and camera step kept; jet: Obj_Accelerate $18; robot by mech_terrain_flow
+$00387A  .robot_flow           ; flow b7 clear: velocity = target, plus a current: bits 4-6 a direction, bits 0-3 x $40
+$00389E  .flow_x_plus
+$0038A6  .flow_y
+$0038D0  .flow_y_plus
+$0038D8  .flow_store_y
+$0038DE  .robot_slow           ; b7 and b6: velocity = target x 3/4, 1/2, 1/4 (bits 0-1: 1, 2, 3); b7 alone: Obj_Accelerate (bits 0-4)
+$0038FE  .slow_half
+$003908  .slow_quarter
+$00390C  .slow_store
+$003916  .jet_accel
+$00391C  .apply                ; 8.8: velocity into mech_sub_x/y, whole pixels into obj_x/y and mech_cam_dx/dy; flow cleared; Mech_CheckCollision; mech_terrain; robot: mech_blocked
+$00397C  .check_event          ; terrain event (hit b2): Obj_TerrainEvent (d0 1 robot, 2 jet)
+$003986  .collide              ; jet: meeting the rival jet (Mechs_JetCollide) undoes the move, mech_blocked | 9, mech_bumped the rival, the rival takes its velocity and it goes back; sfx $E
+$0039AC  .jet_bump_store
+$0039C6  .robot_blocked        ; robot, object or tile: the move undone; object: mech_bumped = the rival ($64/$65) or the unit slot (+ $32 team 2)
+$0039F0  .bumped_unit
+$003A00  .store_bumped
+$003A04  .fuel                 ; transforming: .transform. mech_fuel_count + speed: each $50, the walk step on and fuel - mech_fuel_use (not with v_free_ammo); out of fuel: destroyed, HP $180, sfx 4
+$003A2E  .store_walk
+$003A5E  .store_fuel_count
+$003A62  .set_frame            ; jet: MechJetFrames[heading] (+5 carrying); mech_fire_delay - 1
+$003A84  .jet_frame
+$003A98  .robot_frame          ; the heading; mech_fire_delay 3+: firing pose (+$10); walking: $20 + (heading & $E) + the step's parity
+$003AAE  .robot_fire_check
+$003AC2  .robot_walk
+$003AE6  .transform            ; frames left 9+: every 6th frame (mech_transform_delay) one on: MechTransformFrames[$12 - n] (taking off) or MechTransformFrames2[$C - n] (landing)
+$003B0C  .transform_frame
+$003B24  .transform_table
+$003B36  .transform_turn       ; the last 8: one a frame, turning a step towards mech_turn_to
+$003B42  .transform_turn_store
+$003B5E  .transform_turn_step
+$003B68  .transform_done       ; mech_fuel_count and mech_walk_step 0; the frame by form
+$003B70  .screen               ; destroyed: done. mech_lead 1: .lead; 2: done (the camera follows)
+$003B78  .screen_alive
+$003B94  .screen_free          ; mech_lead 0: a box (split: x $21-$4F; wide: x $71-$CF; y $49-$97)
+$003BA8  .free_x_left
+$003BB2  .free_y
+$003BBC  .free_y_top
+$003BC6  .free_split_done
+$003BC8  .free_wide
+$003BD2  .free_wide_left
+$003BDC  .free_wide_y
+$003BE6  .free_wide_top
+$003BF0  .free_move            ; inside on an axis: the mech moves on screen (mech_screen += the step, the camera's step 0); outside either: mech_lead 1
+$003C02  .free_move_y
+$003C14  .free_check
+$003C1E  .free_done
+$003C20  .lead                 ; mech_screen_x/y 1 px a frame towards MechLeadSplit/Wide[8-way heading], the camera's step the other way; there: mech_lead 2
+$003C34  .lead_x
+$003C4E  .lead_x_step
+$003C5A  .lead_y
+$003C66  .lead_y_step
+$003C72  .lead_check
+$003C7C  .lead_done
+$003C7E  MechLeadSplit         ; 8 x (x, y): where the mech sits on screen while moving along each 8-way heading (up first, clockwise), split screen
+$003C9E  MechLeadWide          ; the same, wide screen
+$003CBE  Obj_Accelerate        ; obj_vel_x/y step d0 towards obj_target_vel_x/y (not past it)
+$003CD8  .x_up
+$003CE0  .y
+$003CF6  .y_up
+$003CFE  .store
+$003D04  Mech_FireGun          ; not transforming; a human waits for mech_fire_delay (a CPU doesn't)
+$003D18  .fire                 ; Shot_FireBullet from (x + $C, y + $C) with KIDOU's +$14/+$15; fired: mech_fire_delay 6, and with v_free_ammo the round given back
+$003D5C  .done
+$003D86  Grid_MarkMech         ; robot form: d2 into the mech's v_grid cell ((x + $10)/32, (y + $10)/32); not a nonzero d2 while destroyed
+$003D96  .mark
+$003DBE  .done
+$003DC0  Mech_CheckCollision   ; -> v_hit_flags (b0 object, b1 tile, b2 terrain event, b3 enemy object), v_hit_id_lo, v_terrain_event. Robot: its own cell's occupant, else the first of the 8 round it that overlaps; both forms: the tiles
+$003E2E  .neighbour            ; GridNeighbourOffsets; a cell past the grid is skipped after its byte is read
+$003E5A  .unit
+$003E62  .unit_slot
+$003E74  .overlap              ; occupant's +$01 = 4 (a SUPPLY's type; for a mech its mech_carried_slot, a quirk): both sizes + $C
+$003E9E  .supply_left
+$003EA8  .supply_y
+$003EBA  .supply_up
+$003EC4  .supply_done
+$003ECA  .overlap_x            ; whichever is further right/down starts within the other's obj_size, on both axes
+$003EDC  .overlap_left
+$003EE6  .overlap_y
+$003EF8  .overlap_up
+$003F02  .overlap_check
+$003F06  .next
+$003F0C  .hit                  ; b0, v_hit_id_lo = the id; the other team: b3
+$003F2E  .tiles                ; 4 x 4 tiles from ((x + 4)/8, (y + 4)/8): the first b15 -> b1; the first b13 -> b2, v_terrain_event3 = its layout word, v_terrain_event = its block's terrain; stops when both are found
+$003F56  .tile_row
+$003F5A  .tile
+$003FA6  .check_event
+$003FD2  .tile_next
+$003FE4  .done
+$003FEA  Mechs_JetCollide      ; d0 = 3 unless both mechs are jets, neither destroyed, within $1C px on both axes (0)
+$004034  .dy
+$004044  .done
+$00404A  Mech_ClearHomePad     ; returning mech a0: the rival a1 within $26 px of the landing spot (mech_home_cam + mech_home_screen, y - $20) on both axes gets vel_x $200 away from it and its vel_y reversed
+$00407C  .dy
+$00408C  .check
+$00409C  .push
+$0040A4  .done
+$0040AA  Mechs_Overlap         ; d0 = 3 unless neither is destroyed and they are within $1C px on both axes (0)
+$0040DC  .dy
+$0040EC  .done
+$0040F2  Mech_FindUnitToLift   ; own unit, not dying, in the mech's cell or the 8 round it, whose (x + 8, y + 8) is within [mech, mech + $30 - size) on both axes: d0 -1, d1 = slot, a3; else d0 0
+$004132  .neighbour
+$004134  .cell
+$004162  .unit
+$0041A2  .next
+$0041A8  .found
+$0041AE  .none
+$0041B0  .done
+$0041B6  Mech_CheckLandBlocked ; d0 -1 if its cell is taken or an occupant of the 9 cells overlaps it (Mech_CheckCollision's rule; + $C each when the carried unit or the occupant has +$01 = 4)
+$004216  .carried
+$004230  .neighbours
+$004248  .neighbour
+$00424A  .cell
+$004274  .unit
+$00427C  .unit_slot
+$00428E  .overlap
+$0042A2  .supply
+$0042BC  .supply_left
+$0042C6  .supply_y
+$0042D8  .supply_up
+$0042E2  .supply_done
+$0042E8  .overlap_x
+$0042FA  .overlap_left
+$004304  .overlap_y
+$004316  .overlap_up
+$004320  .overlap_check
+$004324  .next
+$00432A  .blocked
+$00432E  .clear
+$004330  .done
+$004336  Mech_GetTerrain       ; the 4 x 4 tiles below: a block of terrain type 6 or 8 -> 1 on maps 0-1, else 0; a b15 tile -> 2; a tile under $3F -> 3; all 16 b9 (water) -> 4; some -> 2; none -> 0
+$004360  .row
+$004364  .tile
+$0043B8  .not_water
+$0043C6  .next
+$0043DA  .blocked
+$0043DE  .low_tile
+$0043E2  .all_water
+$0043E6  .land
+$0043EC  .special_block
+$0043FA  .done
+$004710  JoyToDir              ; pad bits (U D L R) -> direction 0-$E, $FF = none
+$004720  MechJetFrames         ; word per direction: frame | flip bits
+$004740  MechTransformFrames
+$004756  MechTransformFrames2
+
+; ===========================================================================
+; Pause, demo record/playback
+
+$004400  Game_CheckPause       ; Start pauses (v_frame_counter kept as it was); demo: Start ends it; v_record_mode 1-3
+$00443C  .wait_release         ; Snd_Pause, Sprites_Build once, then Pause_Frame until Start is let go
+$004442  .wait_press           ; paused until Start; no CPU mech and all 8 buttons across both pads (d0 = $FF): v_free_ammo toggles
+$004472  .wait_unpause         ; until Start is let go; Snd_Pause, a VBlank, v_frame_counter restored
+$004488  .demo                 ; Start on either pad: v_frame_counter_lo = $FF00, so Game_SecondTick ends the demo; else Demo_PlayInput
+$0044A0  .done
+$0044A2  Pause_Frame           ; draw a frame without updating; returns pads OR'd in d0
+$0044E4  Demo_PlayInput        ; feed the recorded pad runs into v_joypad1/2
+$004538  Demo_RecordInput      ; development: record pad runs (writes to ROM on a cartridge)
+$0045E2  Demo_SnapshotUnits    ; development: save live units, start recording
+$00464C  Dev_SaveStartUnits    ; development: save live units to StartUnits
+$0046C8  Demo_GetStreamPtrs    ; a0/a1 = this map's P1/P2 input streams at the play offsets
+$004700  Demo_ClearRecord
+
+; ===========================================================================
+; Interrupts
+
+$004760  HBlank                ; split screen: relink sprite 5 once per frame
+$004786  .done
+$004788  VBlank                ; unlink sprite 5, frame counter
+$0047B6  .count                ; v_frame_counter + 1, saturating
+$0047C4  .done
+
+; ===========================================================================
+; Sprites
+
+$0047CA  Sprites_Build         ; build the frame's sprite list at v_sprite_list; front to back: alerts, outpost bars, jet shadows, air shots, robots, units, ground shots, order menu
+$0047DA  .clear_list           ; 298 entries of 0 (y 0: off screen)
+$004856  .bars_b
+$004876  .draw_bars_b
+$00487A  .jets                 ; fixed entries 6-9 (a4) and the shadows
+$0048A2  .jet1                 ; P1: attr $4200, own view +0, view B +$B0 (wide: +0)
+$0048C8  .jet2                 ; P2: attr $6210, own view +$B0 (wide: +0), view A +0
+$0048F0  .air_shots_b
+$004912  .draw_air_shots_b
+$004916  .robots               ; in the list, without priority: behind map tiles < $40
+$00493E  .robot1
+$004964  .robot2
+$00497C  .link_order           ; links of fixed sprites 5-9 from SpriteLinksP2Robot/Jet; v_sprite5_link_next
+$0049C2  .units_b              ; d4 b31 set: an off-screen unit keeps b6 (view A's pass cleared it)
+$0049E8  .draw_units_b
+$0049EC  .ground_shots
+$004A14  .ground_shots_b
+$004A36  .draw_ground_shots_b
+$004A3A  .menus                ; order menu open and settled (mech_menu_step 0): radar markers and sprites
+$004A66  .menu2
+$004A8C  .done
+$004A98  SpriteLinksP2Robot    ; link bytes for fixed sprites 5-9: 6, 7, 8, 9, $A
+$004A9D  SpriteLinksP2Jet      ; P2 a jet: 7, 9, 6, $A, 8 (chain 5 7 6 9 8); the same picture in every mode, own and other entries being in different views
+$004AA2  Sprites_DrawMechJet   ; a5 mech, a6 rival, a4 its fixed entries, a2 rival's camera, d3 attr, d4/d5 own/other view x offset: jet and shadow ($A570) in both views
+$004ADA  .altitude_set         ; mech_altitude + 2 a frame, up to $10: the shadow's x offset
+$004B1E  .other_view           ; the rival's view: obj_x/y - its camera, within -$20..width and -$20..$C0
+$004B44  .other_width_set
+$004B76  .other_shadow         ; not with altitude 0
+$004BC4  .done
+$004BC6  Sprites_DrawMechRobot ; as Sprites_DrawMechJet, robot form: one 4x4 list sprite per view, attr & $67FF (no priority, no flips)
+$004C1C  .other_view
+$004C44  .other_width_set
+$004C7E  .done
+$004C80  Sprites_DrawMechDebris ; destroyed mech (from Sprites_DrawMechJet): its 16 tiles as 1x1 sprites at radius $C0 - |HP - $C0| along MechDebrisDirs, while under $64
+$004C8C  .radius
+$004CBE  .views_set            ; a1/a2 view cameras, d6 view x offsets (swapped for team 2), d5 width
+$004CC8  .centre               ; d4 = (y + $C):(x + $C)
+$004D00  .own_view_set         ; d5 b31: own view hidden
+$004D0A  .other_view_set       ; d7 b31: rival's view hidden or its menu open
+$004D14  .piece
+$004D80  .own_view_done
+$004D84  .other_view
+$004DBC  .next_piece           ; next tile
+$004DC2  .done
+$004DC4  MechDebrisDirs        ; SineTable direction per piece
+$004DD4  Sprites_DrawUnits     ; a2 camera, d4 view x offset (b31: keep b6 of off-screen units)
+$004DE4  .width_set
+$004E04  .blink_set            ; d0 b31: v_blink_timer >= $28, no markers
+$004E1A  .unit                 ; 100 slots, both teams
+$004E58  .check_ammo           ; missiles and ammo (word +$18) both 0: marker
+$004E64  .check_turret         ; unit_turret b7: a slot for the overlay
+$004E6E  .draw                 ; main sprite last: marker, overlay, unit
+$004EA2  .marker               ; $2590, 2x2, in the first reserved slot
+$004EBC  .off_screen           ; also carried, or the list full ($115)
+$004EC4  .next
+$004ED2  Sprites_DrawAirShots  ; shots with flag bit 2 (fired from the air), all 64 of both teams
+$004EE2  .width_set
+$004F04  .shot
+$004F3E  .draw                 ; 1x1, 2x2 while exploding (b5)
+$004F4C  .off_screen           ; clears b6 in either view's pass: b6 ends up as the last view's
+$004F50  .next
+$004F58  Sprites_DrawGroundShots ; bullets without flag bit 2, 24 per team (not the missiles)
+$004F68  .width_set
+$004F8A  .shot1
+$004FC2  .draw1
+$004FD0  .off_screen1
+$004FD4  .next1
+$004FE2  .shot2
+$00501A  .draw2
+$005028  .off_screen2
+$00502C  .next2
+$005034  Sprites_DrawOutpostBars ; capture bars either side of each outpost (tiles $594/$598), 1-4 cells tall; stops at the first inactive record
+$005044  .width_set
+$005056  .outpost              ; screen y = centre + 8 - camera: from 8 px above the block (its top is at centre - $10 + $20)
+$0050A2  .p2_bar               ; P2's hold on the block's right edge ($594: P1's, 8 px left of the block)
+$0050CE  .next
+$0050D4  .done
+$0050D6  Sprites_DrawAlerts    ; production icon, missile arrows, HQ-hit warning; none after Game_Over
+$0050E0  .production           ; mech_prod_state 1: $5C0 (building), 2: $5C9 (ready), 3x3; blink >= $14
+$005102  .prod_wide_check
+$00510E  .prod_draw
+$005130  .prod_ready
+$005144  .missiles             ; mech_missile_dirs: sfx $14 every $20 frames, arrows while blink & $1F >= 8
+$005166  .missile_blink
+$005188  .missile_split        ; x +$B0 for view slot 1
+$00519A  .missile_arrows
+$0051A6  .arrow                ; $5D2, 2x2, at MissileArrows* entry n for bit n
+$0051B6  .next_arrow
+$0051BC  .hq_alert             ; mech_hq_alert: sfx $13 at $A0, $64, $28; $5A3 while blink >= $10, counted down only then
+$0051DA  .hq_alert_sfx
+$0051E0  .hq_alert_blink
+$0051FC  .hq_alert_wide_check
+$005208  .hq_alert_draw
+$005224  .done
+$005226  MissileArrowsSplit    ; 16 x (sprite x, y), a direction each, round a split view
+$005266  MissileArrowsWide
+$0052A6  Sprites_DrawOrderMenu ; a3 radar sprites, d6/d7 marker attrs: own and rival markers (mech_radar_own/foe), map mode's 18 radar sprites
+$0052D2  .radar_map            ; mech_radar_mode 0 (units near): no sprites
+$0052E0  .radar_sprite         ; entries with y 0 skipped
+$0052EC  .next_radar_sprite
+$0052F2  .done
+$005336  Sprites_Multiplex     ; choose the 70-entry window DMA'd this frame (70 x page from SpriteMuxTable, or the last 70), link it $B..$4F, 0
+$005342  .count_pages          ; pages: count >= $47, $8D, $D3
+$005350  .pick
+$00537E  .last_window          ; page past the count: the last 70 entries
+$005388  .window_set
+$0053A4  .link
+$0053CA  .store_phase          ; v_sprite_mux_phase 0..$B
+$0053D2  VDP_UploadSprites     ; fixed entries by CPU, window by DMA, mech frames by DMA
+$0053F6  .fixed                ; v_hud_sprite_cut: sprite 5 link cut in the RAM copy too
+$0053F8  .fixed_loop           ; sprites 0-9 by CPU to $D000
+$00549C  .mech2_frame          ; P2: mech_frame changed: DMA its 16 tiles to $4200 (P1 above: $4000)
+$0054F2  .done
+$0054F8  SpriteMuxTable
+
+; ===========================================================================
+; Map
+
+$005538  Game_LoadMap          ; graphics, palettes, the three LZW entries, music
+$005560  .sprite_tiles         ; SpriteTiles -> VRAM $4800, $1600 longs
+$005576  .font                 ; FontTiles -> VRAM $D620, $278 longs
+$00558C  .hud_tiles            ; HUDTiles -> VRAM $A000, $800 longs
+$0055A4  .palettes             ; GamePalettes -> CRAM lines 1-3
+$005652  .map_tiles            ; $FF5000 -> VRAM $0000, $1000 longs
+$005690  .wait_load_screen     ; until VBlank_Loading clears v_load_busy
+$0056C0  .clear_line0          ; CRAM line 0 = black (Palette_FadeInMap brings it up)
+$0056C6  .done                 ; also where an aborted load ends
+$0056D4  Map_InitAnimTiles     ; after the map's tiles reach VRAM: each record's own tile picture kept, v_anim_tile_shown = its tile, v_anim_tile_step 0 ($80: off, tile 0)
+$0056E2  .gfx_record           ; each of the 32 records: its tile ($FF5000 + tile x 32) -> v_anim_tile_gfx
+$0056F6  .gfx_copy
+$00571A  .index_record         ; v_anim_tile_shown = the record's tile (word 0 & $1FF); v_anim_tile_step = $80 if that is 0 (the record is off), else 0
+$005728  .index_store
+$005738  Map_AnimTilesUpdate   ; on v_unit_ai_group 0 and 6 (every 6th frame): each record that isn't off shows word [step] & $1FF; a change is queued in v_anim_tile_queue (word 0's own picture back from v_anim_tile_gfx, else a VRAM copy of that tile into word 0's); then step + 1, back to 0 after 15 or before a 0 word
+$00574C  .run
+$005766  .record               ; queue entry cleared; skipped if v_anim_tile_step b7 (off)
+$0057B2  .copy_tile            ; another tile: entry $0101 (DMA), source registers $95/$96 = tile x 32, command word = word 0's VRAM address (VRAM copy: $C0 follows from v_dma_word)
+$0057DE  .advance              ; step 15 -> 0
+$0057E8  .next_word            ; the next word & $1FF = 0 -> step 0
+$0057F6  .step_on
+$0057FC  .next_record
+$005812  Map_AnimTilesUpload   ; after VDP_WaitVBlank, display off, on v_unit_ai_group 0 and 6: each queued v_anim_tile_queue entry (CPU: 8 longs from v_anim_tile_gfx; DMA: a $20-byte VRAM copy); then ColourCycles steps CRAM line 0 colours 2 and $B
+$005826  .upload
+$005840  .entry                ; byte 0 = 0: nothing queued; byte 1 = 0: CPU write, else DMA
+$00584A  .cpu_wait             ; until the DMA busy bit (status b1) clears; auto-increment 2, display off
+$005864  .cpu_copy
+$00586C  .dma_wait             ; DMA on, auto-increment 1, length $20, source from the entry, mode $C0 (VRAM copy), then the command and v_dma_trigger
+$00589C  .next_entry
+$0058A6  .done_wait            ; auto-increment 2, DMA off
+$0058CA  .cycle                ; each of the two v_colour_cycle words + 1, its ColourCycles colour (& $F) to its ColourCycleCRAM address
+$0058E6  ColourCycles          ; 2 x 16 CRAM words, a step every 6 frames: red to yellow and back (CRAM line 0 colour 2), blue to cyan and back (colour $B); every map's palette has such colours there
+$005926  ColourCycleCRAM       ; the CRAM write commands for line 0 colours 2 and $B
+$00592E  Screen_InitGame       ; clear planes, split-screen setup, HUD frame
+$00594C  .plane_a              ; plane A: $800 words of $25FF (tile $5FF, line 1)
+$00595C  .plane_b              ; plane B: $800 words of 0
+$00598C  .frame_row            ; split: plane B cells 0-17 of rows 0-23 = $25FF; VSRAM B = -32, HScroll B = $B0
+$005992  .frame_cells
+$00599C  .window_fill          ; 32 rows of 18 x 0, 46 x $8000 from where the VDP address was left (wide: $F000; split: $EBA4)
+$0059A4  .window_row
+$0059A6  .window_clear
+$0059AE  .window_prio
+$0059CC  .hud_row              ; HUDFrameTiles -> window rows 0-3
+$0059D0  .hud_cells
+$0059FA  .divider              ; sprites 0-5 at $D000: 4x4 of tile $500, x $110; split: y $A0 up in $20s, wide: y 0
+$006C94  HUDFrameTiles
+$005A10  Sprites_InitFixed
+$005A2E  .entry                ; as Screen_InitGame.divider, into v_sprite_fixed
+$005A44  Map_DrawViews         ; full redraw of both views
+$005ACC  Map_DrawViewB
+$005AD6  .split
+$005B50  Map_DrawViewWide      ; wide screen: plane A, 42 x 26 cells from the shown player's camera
+$005BD4  .camera2              ; P1 hidden (mech_view < 0): camera 2
+$005C4E  Map_RedrawPlayerView  ; a0 mech: redraw the plane its view is on
+$005C62  .wide
+$005C74  .hidden
+$005C76  .split_a
+$005CDA  .split_b
+$005D3E  .wide_camera1
+$005DA2  .wide_camera2
+$005E02  Map_DrawBlockRect     ; d3 VDP write command for the first cell, d4/d5 map tile column/row, d6/d7 columns/rows - 1: map tiles into a plane, wrapping both; priority on tiles < $40
+$005E46  .row
+$005E52  .cell                 ; block word & $19FF: tile and flips only, line 0
+$005E72  .put
+$005EA6  .next_cell            ; next block every 4 cells, wrapping within the layout row
+$005ECE  .row_block            ; next layout row every 4 rows
+$005EE0  Map_ScrollUpdate      ; a view whose scroll crossed a cell since last frame: queue the column on the side mech_cam_dx points to and the row mech_cam_dy points to
+$005F18  .queue_a              ; split: view A follows mech 1
+$005F2A  .col_right_a
+$005F2E  .row_a
+$005F40  .row_bottom_a
+$005F44  .check_b
+$005F6C  .queue_b              ; view B follows mech 2
+$005F7E  .col_right_b
+$005F82  .row_b
+$005F94  .row_bottom_b
+$005F98  .save_prev            ; v_scroll_*_prev = v_scroll_* (both views, both axes)
+$005FAE  .wide                 ; only view A's scroll is compared
+$005FD6  .queue_wide           ; the shown mech: mech 1 if its mech_view is 0, else mech 2
+$005FE8  .shown_mech
+$005FF8  .col_right_wide
+$005FFC  .row_wide
+$00600C  .row_bottom_wide
+$006010  .save_prev_wide
+$006026  Map_QueueRowTopA      ; view A's top margin row (plane row (scroll y - 8) / 8 + 4) from camera 1, 20 cells
+$00608C  Map_QueueRowBottomA   ; bottom margin row (scroll y + $C0)
+$0060F6  Map_QueueRowTopB      ; as A on plane B from camera 2, then the command for plane row (row + 28) & 31 at column 0, which Map_FlushRowB clears
+$006174  Map_QueueRowBottomB   ; clears plane row (row - 28) & 31
+$0061F6  Map_QueueRowTopFull   ; wide: a1 = shown mech; 42 cells from camera 1, or Map_QueueRowTopFullCam2 if mech_view_index is set
+$006264  Map_QueueRowBottomFull
+$0062D6  Map_QueueRowTopFullCam2 ; as Map_QueueRowTopFull from camera 2
+$00633C  Map_QueueRowBottomFullCam2 ; falls into Map_BuildRow
+$0063A2  Map_BuildRow          ; a6 queue, d3 VDP command, d4/d5 map tile column/row, d6 cells - 1: store d6, d3, then the cells (as Map_DrawBlockRect: & $19FF, priority on tiles < $40); each cell looked up afresh, the column wrapping at 256
+$0063CC  .cell
+$006402  .put
+$00640C  Map_QueueColLeftA     ; view A's left margin column (plane column (scroll x - 8) / 8), 26 cells
+$006472  Map_QueueColRightA    ; right margin column (scroll x + $90)
+$0064DC  Map_QueueColLeftB     ; plane B, then the command for plane column (column + 22) & 63 at row 0, which Map_FlushColB clears
+$00655A  Map_QueueColRightB    ; clears plane column (column - 22) & 63
+$0065DC  Map_QueueColLeftFull  ; wide: 26 cells from camera 1, or Map_QueueColLeftFullCam2
+$00664A  Map_QueueColRightFull ; right margin column (scroll x + $140)
+$0066BC  Map_QueueColLeftFullCam2
+$006722  Map_QueueColRightFullCam2 ; falls into Map_BuildColumn
+$006788  Map_BuildColumn       ; as Map_BuildRow down a column, the row wrapping at 256
+$0067B2  .cell
+$0067E8  .put
+$0067F2  Map_FlushScroll       ; scroll registers, then the queued rows/columns
+$00683C  .col_a
+$006844  .row_b
+$00684C  .col_b
+$006854  .done
+$00698A  MapFx_Update          ; each v_mapfx record whose countdown runs out: its block goes into the layout word and, where view A / B shows it, onto the plane (MapFx_DrawBlock); a chained record then takes the next block from the new block's terrain
+$006996  .width_set            ; d6 = view width in tiles + 4 ($16 split, $2C wide); d6 b31 / d7 b31: view A / B not drawn (its mech's view hidden or its order menu open)
+$0069C6  .p1_menu
+$0069D0  .p2_view
+$0069DA  .p2_menu
+$0069E4  .record               ; active (b7): countdown +2 - 1; past 0: block +8 & $1FF into the layout word at +$A (high bits kept), a4 = its tiles
+$006A9C  .view_b               ; camera B against view B's plane (split: plane B, v_scroll_x_b; wide: plane A)
+$006AB2  .b_columns
+$006AF4  .b_plane_set
+$006B22  .chain                ; flags cleared; b6 (chained): +9 = the new block's terrain high byte (the next block), flags $80 | the terrain low byte's b7 as b6, countdown = +3
+$006B4E  .next
+$006B5A  MapFx_DrawBlock       ; a4's 4 x 4 nametable words from VDP command d3 (rows $80 apart, wrapping in the 64 x 32 plane); & $19FF, priority on tiles below $40, as the view drawers
+$006B60  .row
+$006B6C  .cell
+$006B86  .store
+$006BB0  Map_ScanOutposts      ; find the HQs and outposts in the layout; fill v_hq, v_outposts, counts
+$006BBA  .clear                ; v_outposts, v_hq: $28 longs
+$006BE8  .row                  ; block y = row x $20 + $10
+$006BEC  .block                ; terrain 3: HQ; 2: outpost (index into layout bits 10-13)
+$006C38  .owned                ; terrain high byte b1: owned; b0: P2
+$006C48  .p2_outpost
+$006C54  .hq                   ; high byte b0 picks v_hq or v_hq + 8; 1024 HP
+$006C70  .store_hq
+$006C80  .next_block
+$006856  Map_FlushRowA         ; one command per cell, the column wrapping within the plane row
+$006868  #number               ; $20000 is the next cell in a VDP command, not FontTiles
+$006874  .cell
+$006884  Map_FlushColA         ; one command per cell, the row wrapping within the plane
+$00689A  .cell
+$0068A8  Map_FlushRowB         ; then 64 zero words from the queued clear command: a whole plane row
+$0068BA  #number               ; as in Map_FlushRowA
+$0068C6  .cell
+$00691A  Map_FlushColB         ; then, with auto-increment $80, 32 zero words from the clear command: a whole plane column
+$006930  .cell
+
+; ===========================================================================
+; Order menu (C button): radar, unit/order selection, purchase
+
+$006DD4  OrderMenu_UpdateBoth  ; open/close animation for either mech's menu
+$006E22  OrderMenu_Step        ; opening: one draw step per frame; then C closes
+$006E5C  OrderMenu_StartClose
+$006E68  OrderMenu_CloseStep
+$006EEC  OrderMenuOpenSteps    ; split screen, view A
+$006F30  OrderMenuOpenStepsB   ; split screen, view B
+$006F54  OrderMenu_Open0       ; save scroll, clear plane A top, radar pages 0-1
+$006F92  OrderMenu_Open1       ; clear plane A bottom, radar pages 2-3
+$006FA6  OrderMenu_Open3       ; frame and labels
+$007104  OrderMenu_Open4       ; unit picture, cost, unit count
+$007110  OrderMenu_Open5       ; order, money, radar page 0
+$00711E  OrderMenu_Open6       ; radar pages 1-2
+$00712A  OrderMenu_Open7       ; radar page 3, radar frame, cursor, radar mode; sfx $F
+$007190  OrderMenuCloseSteps
+$0071EE  OrderMenuCloseStepsB
+$00722A  OrderMenu_Close0      ; clear plane A top, restore scroll
+$00725E  OrderMenu_Close1
+$0072DC  VDP_ClearC000         ; DMA fill $800 bytes of 0
+$0072E2  VDP_ClearC800
+$0072E8  VDP_ClearE000
+$0072EE  VDP_ClearE800
+$0072F2  VDP_Fill2K            ; DMA fill $800 bytes of 0 at VRAM d0
+$007326  VDP_WaitDMA           ; wait for DMA, autoincrement 2, reg 1 = $24
+$00733E  OrderMenu_Input       ; rows: unit type, order, radar mode; buy, or re-order the carried unit
+$007764  OrderMenu_DrawCursor
+$0077A4  OrderMenu_EraseCursor
+$0077D0  OrderMenuCursorPos
+$0077D6  OrderMenu_DrawUnitPic
+$007998  OrderMenu_DrawCarriedGauges
+$007A6C  OrderMenu_DrawCarriedIcon
+$007AAE  VDP_Copy64            ; 16 longs from (a3)+ to VDP_DATA
+$007AD0  UnitMenuTiles         ; first tile of each unit type's picture
+$007AE4  OrderMenu_DrawOrderSel
+$007B5C  OrderMenu_DrawOrder   ; icon and name of the selected order (OrderInfo)
+$007C26  OrderMenu_DrawUnitCount
+$007C66  OrderMenu_DrawMoney
+$007C9C  OrderMenu_DrawCost
+$007CD6  OrderMenu_DrawRadarMode
+$007D00  OrderMenu_RefreshRadar ; one radar page per frame, round robin
+$007D50  Radar_PlotUnits       ; mode 0: dots for objects around the mech
+$00810A  Radar_UploadPage      ; page d0 of the player's radar buffer -> VRAM
+$00821A  Radar_DrawFrame
+$00830A  Radar_DrawPage
+$008474  Radar_LoadPage        ; page d0 from RadarBlank (mode 0) or the map's radar image
+$0084F6  OrderMenu_DrawSidePanels ; full screen: the patterned panels either side of the menu
+$008516  OrderMenu_DrawSidePanel
+$008536  SidePanelTiles
+$008586  OrderMenu_DrawBorder
+$008662  VDP_FillRowL
+$008672  VDP_FillColumn        ; d7+1 words down a column (autoincrement $80)
+
+; ===========================================================================
+; HUD gauges, terrain events, outposts
+
+$008684  HUD_QueueBar          ; d1 value, d2 max, d3 cells - 1, d0 VDP command -> the first free v_gauge_queue entry: a tile per cell of 4 quarters, the value filled ($A5B1-$A5B4), the rest of the max empty ($A5B0), past the max blank ($A5BE)
+$00868E  .clamped              ; a value above the max is the max
+$008696  .find_slot            ; an entry whose count word is 0 is free
+$0086A6  .slot_found           ; count (cells - 1), the VDP command, then the cells
+$0086B0  .full_cells           ; value 4 or more left: a full cell ($A5B4)
+$0086C4  .value_ends           ; the value ends in this cell; if the max does too (1-3 left), GaugeTiles[value][max - value]; none left, blanks
+$0086DE  .max_goes_on          ; $A5B0 + value: 0-3 quarters filled
+$0086EA  .empty_cells          ; empty cells ($A5B0) while 4 or more of the max are left
+$0086FC  .max_ends             ; the max ends in this cell: GaugeTiles[0][max left] ($A5BE at 0)
+$008704  .blank_rest           ; the cells past the max: $A5BE
+$008708  .blank_loop
+$008710  .done                 ; also with the queue full: the bar is dropped, though the caller has set its shown value
+$008716  GaugeTiles            ; 4 x 4 words, [value 0-3][max - value]: the cell where both a bar's value and its max end. Only maxima that aren't a multiple of 4 reach the cells with a max of 1-3 (the order menu's, OrderMenu_DrawCarriedGauges)
+$008736  HUD_FlushBars         ; after VDP_WaitVBlank, display off: each queued bar to VRAM at its command (count + 1 words), its entry freed
+$008744  .slot_loop            ; count word 0: a free entry
+$008750  .word_loop
+$008758  .next_slot
+$008764  Obj_TerrainEvent      ; a0 an object over a terrain-event tile, d0 its kind (0 unit, 1 robot, 2 jet, 3 shot): TerrainEventHandlers[v_terrain_event & $F], d7 = the event's low byte. Except for a shot, +$2B (mech_terrain_flow / unit_push) is cleared first
+$008772  .dispatch
+$008796  TerrainEventHandlers  ; 16 handlers by v_terrain_event & $F (the block's terrain type)
+$0087D6  TerrainEv_None0       ; type 0: nothing
+$0087D8  TerrainEv_ShotHitFx   ; type 1, shots only: a MapFx record at the shot (+2/+4) replacing the block with terrain >> 8 ($80000000; terrain b7: chained, every 4 frames, $C0000303), layout offset v_terrain_event2. ? no map's layout has a type-1 block with event tiles
+$0087E0  .shot
+$0087F8  .store
+$00881A  .done
+$00881C  TerrainEv_Outpost     ; type 2: outpost (index from v_terrain_event3 bits 10-13): Outpost_Service, Outpost_PickUpProduct; then an INFANTRY unit (not carried or dying) raises its side's hold and is used up
+$008894  .raise_hold           ; own hold below 4: + 1; the unit's flags cleared, v_unit_count and the INFANTRY type count - 1; the other side's hold - 1 (floor 0)
+$0088B2  .check_taken          ; own hold still below 4: sfx $15
+$0088C2  .taken                ; hold 4 and not already ours: owner flags $82/$83, v_outpost_count moved over (from neutral, or from the other side), Outpost_ShowOwner
+$0088DE  .recount
+$0088F2  .p2_takes
+$008900  .done
+$008902  TerrainEv_HQ          ; type 3: HQ (record $10 + terrain bit 8, i.e. v_hq): Outpost_Service and Outpost_PickUpProduct as at an outpost
+$008912  .service
+$00891C  Outpost_PickUpProduct ; d1 record index: a jet (d0 2, form 1, order menu closed) holding A over its own outpost/HQ with a ready unit (mech_prod_state 2): Unit_CreateCarried, carrying (form 2), KIDOU +$22 speed, +$25 fuel use (halved with a CPU mech on difficulty A, not in a demo); sfx $C. 50 units: sfx $1A if its view shows. d2 0 = picked up
+$008992  .create
+$0089FA  .fuel_use_set
+$008A0C  .fail
+$008A14  Outpost_Service       ; d1 record index, d0 < 3: on frames with v_unit_ai_group 0, an own outpost/HQ runs Obj_RepairRefuel on a0 (a mech as KIDOU, type $E) and, for a mech carrying a unit, on that unit too (its result into mech_carried_refill)
+$008A56  .repair
+$008A78  .carried_team_set
+$008A9C  Obj_RepairRefuel      ; a0 by UnitStats type d1: HP + 8, fuel + $28, ammo + 2, missiles + 2, each up to the type's maximum (on overflow: the maximum) -> d3 b0-b3 = which changed
+$008AB8  .hp_cap
+$008ABE  .hp_store
+$008ACA  .fuel
+$008ADC  .fuel_cap
+$008AE2  .fuel_store
+$008AEE  .ammo
+$008AFE  .ammo_cap
+$008B04  .ammo_store
+$008B10  .missiles
+$008B20  .missiles_cap
+$008B26  .missiles_store
+$008B32  .done
+$008B34  Outpost_ServiceExit   ; Outpost_Service's return (placed after Obj_RepairRefuel)
+$008B3A  Outpost_ShowOwner     ; a1 a captured outpost, d2 $1D0 (P1) / $1C0 (P2): MapFx records put blocks d2, +1, +8, +9 at the four corners of the 3 x 3 blocks round it (the owner's flags); sfx $16
+$008BE6  .sfx
+$008BEC  TerrainEv_None4       ; type 4: nothing
+$008BEE  TerrainEv_ShotDestroy ; type 5, shots only: from the hit block, up and then left while the blocks have this terrain type, then row by row a MapFx record per such block, each replaced by its terrain >> 8 ($80000000; terrain b7: chained, every 16 frames). ? no map's layout has one
+$008BF6  .shot
+$008C10  .find_top
+$008C2A  .top_found
+$008C32  .find_left
+$008C4A  .left_found
+$008C64  .row
+$008C78  .block
+$008CAE  .next_row
+$008CB8  .done
+$008CBA  TerrainEv_Current     ; type 6, units and robots: +$2B = terrain >> 8 & $7F (a current: direction in bits 4-6, strength in 0-3). Maps 0, 1, 5
+$008CC2  .set
+$008CD4  TerrainEv_ShotHQ      ; type 7 (round an HQ), shots with flags b3 from the other side: the HQ loses power / 2 (a human's shot at a CPU's HQ: difficulty C x 3/4, D x 1/2 (min 1), A/B x 3/4 while v_cpu_boost is on), floor 0; its mech's mech_hq_alert $B4; unless shot flags b0, the owner (+$1C) gets hit victim $66 and shot flags b6; sfx $17
+$008D14  .sides_set            ; a1 the HQ, a2 its mech, a3 the other mech; d1 = shot power (+$18) / 2
+$008D44  .boost_cut_done
+$008D46  .difficulty_cd
+$008D62  .c_cut_done
+$008D64  .difficulty_d
+$008D6A  .damage
+$008D74  .alert
+$008D80  .check_owner
+$008D96  .sfx
+$008D9C  .done
+$008D9E  TerrainEv_Damage      ; type 8 (map 1, VULKAN: ? lava): a robot on frames with v_unit_ai_group 0 loses $20 HP (sfx $1C), a unit on groups 0 and 1 $30; below 0: destroyed (b5), HP $180 / $10, sfx 4 / 5 (INFANTRY 6); FWA (type 9) also gets the explosion sprite
+$008DB4  .hurt
+$008DD8  .damage
+$008E06  .sfx
+$008E0C  .sizzle
+$008E12  .done
+$008E14  TerrainEv_Slippery    ; type 9, units and robots: +$2B = $80 | (31 - (terrain >> 8 & $1F)), an acceleration (map 5, EISFREI: $84)
+$008E1C  .set
+$008E36  TerrainEv_Slow        ; type $A, units and robots: +$2B = $C0 | terrain >> 8 & 3, a slowdown (map 6 WALDUNG $C3: a quarter; map 7 OASE $C2: a half)
+$008E3E  .set
+$008E54  TerrainEv_NoneB       ; types $B-$F: nothing
+$008E56  TerrainEv_NoneC
+$008E58  TerrainEv_NoneD
+$008E5A  TerrainEv_NoneE
+$008E5C  TerrainEv_NoneF
+$008E5E  MapFx_Alloc           ; the first free v_mapfx record (b7 clear) -> a3, d0 0; none: d0 -1
+$008E68  .find
+$008E76  .found
+$008E7A  LoadScreen_Start      ; mech animation while the map loads; VBlank -> VBlank_Loading
+$008EB8  .wide                 ; the shown player's sprite at x $110, the other at x 1
+$008EC8  .set_x
+$008ED2  .start
+$008F04  LoadScreen_UploadSprites
+$008F2A  LoadScreen_UploadMech
+$008FBA  VBlank_Loading        ; loading-screen VBlank; in a demo any button aborts the load
+
+; ===========================================================================
+; End of a game
+
+$009094  Game_Over             ; HQ destroyed: finale, then the results screens, then the title
+$0090F6  GameOver_PlaceMechs
+$00917E  GameOver_ResetViews
+$0091EA  GameOver_MechToJet
+$009252  GameOver_ClearUnits
+$00928A  GameOver_DestroyHQ    ; explosions and shake around the lost HQ, then fade out
+$00930E  GameOver_ShakeFrame   ; odd frames: new random offsets a, b (-3..3); scroll x += a, y += b, next frame the reverse (so it returns every 2nd frame); Map_ScrollUpdate, the uploads, a fade step every 8th frame
+$00932C  .first_set            ; a random 4 becomes 0
+$009346  .second_set
+$00934A  .apply
+$009390  .end_upload
+$009396  GameOver_RandomExplosion
+$0093C2  Palette_FadeOutStep   ; map palette one step darker
+$00943E  Palette_FadeInMap
+$009446  .clear                ; v_map_palette = black
+$00946C  .overshoot            ; 8 steps towards target + 2 (entry 0 only in the first two), 4 frames each
+$009472  .overshoot_entry
+$009486  .channels             ; blue, green, red
+$0094D6  .overshoot_upload
+$0094F6  .settle               ; 4 steps towards the target itself
+$0094FC  .settle_entry
+$00954A  .settle_upload
+$00956A  Palette_StepChannel   ; 3-bit channel d2 one step towards d3
+$009582  .at_max
+$009584  .down
+$00958A  .done
+$00958E  VDP_BeginUpload       ; wait for VBlank, block the HBlank split, display off
+$0095A6  VDP_EndUpload
+
+; ===========================================================================
+; Units
+
+$0095BA  Demo_SpawnUnits       ; spawn the demo snapshot's units
+$0095C6  .record               ; 32 8-byte records $100 before the demo's streams, as StartUnits'
+$0095E6  .next
+$0095EE  Units_SpawnCPUStart   ; CPU players' starting units from StartUnits
+$009602  .not_both_cpu         ; CPU against CPU gets none
+$009628  .team2
+$00963A  Units_SpawnFromRecords ; d1 team offset (0 / $100), d7 type for GRM records
+$009652  .record               ; flags b7: present. Type 5 (GRM) becomes d7 with order 5, unless d7 is 5 too
+$00966E  .record_order
+$009672  .spawn
+$00968A  .next
+$009692  CPUStartTypeTable     ; per difficulty: type that replaces type 5 records
+$009696  Unit_SpawnSurvivor    ; a destroyed vehicle leaves an INFANTRY unit
+$0096BC  Unit_Spawn            ; d1 flags, d2 type, d3 order, d4 dir, d5/d6 x/y; d0 = -1 if full or blocked; d7 = slot + 1
+$0096D2  .team_set
+$0096D6  .find_free            ; d7 counts slot + 1 (the grid id's low bits)
+$0096EC  .free_slot            ; type & $F; ST-57U (3): obj_flags b0
+$0096FA  .clear_record         ; $50 bytes, then the UnitStats fields; heading d4 + 1, unit_turn_to d4, so Unit_SetSprite turns back and sets the velocity
+$0096FE  .clear_loop
+$0097A0  .placed               ; not blocked. (Blocked, just above: flags cleared, the rest of the record stays, d0 = -1)
+$0097C2  .count                ; v_unit_count, v_unit_type_count[type], v_units_built (saturating)
+$0097D0  .counted              ; grid id $40 / $C0 | slot + 1; Unit_SetSprite with palette $4000 / $6000
+$0097E6  .mark
+$0097F2  .done
+$0097F8  Unit_CreateCarried    ; as Unit_Spawn without a position (the mech carries it); d7 = slot (not + 1), which the caller keeps in mech +$01
+$00980E  .team_set
+$009812  .find_free
+$009828  .free_slot
+$009836  .clear_record         ; no heading, grid mark or Unit_SetSprite
+$00983A  .clear_loop
+$0098C4  .count
+$0098D2  .counted
+$0098D4  .done
+$0098DA  FX_SpawnExplosion     ; a dying type-3 object at d5/d6 (explosion only)
+
+; ===========================================================================
+; CPU player (mech flag bit 0). AI_MechThink runs every frame from
+; Mech_Update and writes mech_pad. Two layers: the move state
+; (mech_ai_move, AIMoveStateTable) and the plan (mech_ai_plan, AIPlanTable)
+; with its step (mech_ai_step). Plan 0 runs a mode (mech_ai_mode,
+; AIPlanModeTable): 0 setup, 1 strategy (mech_ai_strategy), 2 buy,
+; 3 route, 4 reset. The move states talk to the strategy through
+; mech_ai_alert / mech_ai_alert_taken.
+; Records: the 18 8-byte entries of v_outposts then v_hq. Flags byte:
+; $80/$81 neutral outpost, $82/$83 P1/P2 outpost, $C2/$C3 P1/P2 HQ.
+; Buying: AI_BuyAt* take d0 = how many, d1 = kind 0-7; mode 2 runs the
+; AIBuyScripts entry [mech_ai_buy_variant & 3][kind] through plan 1.
+; Read: the strategy layer, modes 0-4, plan $11, all the move states.
+; Not read: the plans (other than $11).
+
+$00A400  AI_MechThink          ; inactive/destroyed: AI_MechThink_Inactive; after a death AI_Respawned; alert 1 while strategy runs: step 14; alert < 0: AI_MechThink_Alert
+$00A454  AI_MechThink_RunLayers ; move state (AIMoveStateTable), then plan (AIPlanTable), then AI_KeepOffEdges
+$00A480  AI_KeepOffEdges       ; jet with a direction held: at a map edge turn the pad along it (margins 8/$7D8, $28/$7B8 while mech_ai_edge_steer is set)
+$00A4CA  .check_x
+$00A4D8  .at_left              ; pressing left: up or down by heading, away from a corner
+$00A4F6  .press_up
+$00A502  .left_lower_half      ; heading 4-$B
+$00A506  .press_down
+$00A512  .at_right             ; pressing right. ? corner test inverted: steers up near the top, down near the bottom
+$00A530  .right_upper_half     ; heading $C-3
+$00A536  .check_y
+$00A544  .at_top               ; pressing up. ? corner test inverted as at the right edge
+$00A55A  .press_right
+$00A564  .top_left_half        ; heading 8-$F
+$00A568  .press_left
+$00A572  .at_bottom            ; pressing down
+$00A58E  .bottom_right_half    ; heading 0-7
+$00A594  .store_pad            ; mech_ai_edge_steer = the pad as it was
+$00A5A8  .off_edges            ; wide margins: clear mech_ai_edge_steer
+$00A5B2  .done
+$00A5B4  AI_MechThink_Inactive ; destroyed: mech_ai_respawn = $100
+$00A5C0  AI_MechThink_Return
+$00A5C2  AI_MechThink_Alert    ; alert < 0 not yet taken: plan 1 carries on; robot: tap A and keep moving; jet: step 13 (mech_ai_alert_taken = $FF)
+$00A5E6  .release_a
+$00A5FC  .check_blocked        ; blocked: the direction ahead; else keep the held one
+$00A612  .set_dir              ; AIPadDirs[d0], keeping b7/b5/b4
+$00A620  .store_pad
+$00A626  .start_hq_alarm
+$00A644  .done
+$00A646  AIMoveStateTable      ; 16 move states by mech_ai_move: round robin 0, 1, 9, 10, 13, 14 (one a frame); service trip 2, 3, 4, 5, 7, 8; fight 6; 11 idle; 12, 15 never set
+$00A686  AI_Move_CheckSupplies ; 0: mech_ai_refuel set: service trip (state 2); else mech_ai_needs_service = $FF on fuel < 1/4, HP < 1/4 or ammo < 1/8 (carrying: fuel only; no HP test once an alert is taken); -> 1
+$00A6CA  .check_ammo
+$00A6D8  .supplies_ok          ; unreachable code follows ($A6DC: older thresholds picked by d0)
+$00A748  .not_low
+$00A74C  .next_state
+$00A752  .low
+$00A75E  .go_service           ; clear the request, mech_ai_needs_service and the pad; goal -> mech_ai_saved_goal; -> 2, skipping the plan
+$00A778  AI_Move_Idle          ; 11: nothing, the plan runs (Mechs_Init/Mech2_Init set it; setup mode ends it)
+$00A77A  AI_Move_WatchEnemyMech ; 1: enemy mech alive, within mech_ai_engage_range, same form, own ammo: fight (6) if no plan runs or mech_ai_engage = $80, else mech_ai_engage = $FF; -> 9. Plan 5: -> 9. Unreachable code at $A798 (older test of mech_ai_hq_attack)
+$00A7C6  .no_fight             ; -> 9, mech_ai_engage = 0
+$00A7D2  .check_range
+$00A806  .plan_running
+$00A81E  .fight                ; -> 6, skipping the plan
+$00A830  .check_engage         ; no plan and not carrying, or blocked by an object: mech_ai_engage = $80
+$00A840  .check_bumped
+$00A84A  .allow_fight
+$00A850  .check_forms          ; needs ammo, and both robots or both jets
+$00A86A  .own_jet
+$00A876  AI_Move_CheckHQHit    ; 9: own HQ lost HP (AI_CheckOwnHQHP), no alert < 0 up: alert $81; -> 10
+$00A888  .next_state
+$00A890  AI_Move_CheckHQGuards ; 10: enemy units round the own HQ, or none of ours: alert $80 (not if the HQ is the dest or an alert < 0 is up); clear again: withdraw an untaken $80; -> 13
+$00A89E  .count
+$00A8AA  .short_of_guards
+$00A8BC  .dest_is_hq
+$00A8BE  .guarded
+$00A8CC  .next_state
+$00A8D4  AI_Move_WatchLaunchPosts ; 13: one outpost a visit (mech_ai_watch_post): a launch outpost of the other side (AILaunchPosts) where it has a hold or units near, not the dest, no HQ run: alert 1 there; -> 14. Nothing while an alert is up
+$00A90A  .find_row
+$00A932  .p2_check_hold
+$00A938  .count_enemies
+$00A940  .enemy_there
+$00A95A  .next_state
+$00A962  .next_post            ; unreachable code follows ($A974: an old state that tops up a unit's HP, fuel, ammo and missiles, slot cursor +$EE, then state 15)
+$00AA08  AI_Move_DodgeMissiles ; 14/15: jet, enemy missiles homing in (mech_missile_dirs, lowest direction bit) from ahead: turn 45 or 90 degrees away, -> 0, mech_ai_dodge = 16; later visits hold the pad and skip the plan until it runs out; else -> 0
+$00AA2C  .find_missile
+$00AA3A  .found
+$00AA64  .ahead                ; ? the new pad is set once, then states 0-13 run a frame each (plan included) before the hold starts
+$00AA9E  .not_ahead
+$00AAA4  .dodging              ; mech_ai_dodge - 1, pad kept, plan skipped, AI_KeepOffEdges still runs
+$00AAB0  .done
+$00AABA  AI_Move_ToNearestPost ; 2: goal = nearest own outpost, heading none; -> 3 (none: stay). Skips the plan
+$00AAD0  .skip_plan
+$00AAD4  AI_Move_ToOtherPost   ; 12 (never set): goal = nearest own outpost but the one at the goal -> 3; none -> 7. Skips the plan
+$00AAF0  .none
+$00AAFA  AI_Move_TakeOff       ; 3: robot: tap A and walk (no direction: random; blocked: one 8-way step clockwise); jet: pad cleared, -> 4, plan 9 (fly to the goal) through AI_CallPlan. Skips the plan
+$00AB10  .robot
+$00AB30  .check_blocked
+$00AB46  .set_dir
+$00AB54  .skip_plan
+$00AB58  AI_Move_WaitArrival   ; 4: plan 9 still flying: wait; then -> 5
+$00AB68  .flying
+$00AB6A  AI_Move_CheckServiced ; 5: fuel, HP and ammo full (carrying: fuel; alert < 0: fuel and ammo over half): -> 0, goal back from mech_ai_saved_goal, plan 4 restarts; else -> 7, skipping the plan
+$00AB90  .need_full
+$00ABB8  .serviced
+$00ABD0  .done
+$00ABD2  .not_yet
+$00ABDC  AI_Move_GuardPost     ; 7: enemy mech a jet within range: face it (a wobble by frame) and tap B every 4th frame; else release B; -> 8. Skips the plan
+$00AC2A  .aim
+$00AC44  .turn                 ; ! the +/-1 step in d1 is never used: the heading is set straight to the target
+$00AC54  .fire
+$00AC60  .aimed
+$00AC62  .release_b
+$00AC68  .next_state
+$00AC70  AI_Move_CheckOnPost   ; 8: in the arrival box of the nearest own outpost: -> 5; no own outpost: goal back, -> 1; enemy mech a jet in range with ammo: goal back, -> 6; else -> 2. Always skips the plan
+$00ACA8  .no_post
+$00ACB6  .off_post
+$00ACEC  .back_to_post
+$00ACF4  AI_CheckOwnHQHP       ; own HQ HP against mech_ai_hq_hp: C set if it has dropped
+$00AD02  .compare
+$00AD0C  AI_Move_Fight         ; 6: fight the enemy mech; own HQ hit: alert $EE. Leave (below) on: enemy destroyed, no ammo, fuel < 1/4, HP < $42 (not once an alert is taken), out of range. Tap A to match the enemy's form; same form: steer at it and fire (B); skips the plan
+$00AD20  .check_leave
+$00AD54  .check_range
+$00AD7C  .check_hold           ; transforming, or mech_ai_hold running: keep the pad
+$00AD8C  .match_forms
+$00ADA4  .own_jet
+$00ADB0  .own_carrying         ; enemy a robot: leave
+$00ADB8  .forms_differ         ; robot: tap A (take off); jet: tap A (land) if the cell below is free, else .cant_land
+$00ADCE  .try_land
+$00ADEA  .forms_match          ; release A
+$00ADF4  .fire_check
+$00AE00  .fire_check_jet
+$00AE06  .fire_timing          ; frame & 3 = 3
+$00AE18  .check_facing         ; ! heading - direction is not wrapped: 0 against $F counts as not facing
+$00AE4E  .shot_result          ; robot, after an aimed shot: A and B released; shot in flight: steer; hit an enemy: fire again; else .break_off
+$00AE86  .hit_team2            ; victim $32-$63 or $65. ! $32 is team 1's slot 49 (victim = slot + 1)
+$00AE8E  .hit_team1            ; victim under $32, or $64
+$00AE96  .break_off            ; tap A (robot: take off) and move off for 16 frames: after a missed shot, or blocked walking to the enemy
+$00AEA0  .jet_fire
+$00AEA4  .tap_b
+$00AEAA  .steer                ; ? mech_ai_hold is always 0 here, so this countdown is never taken
+$00AEBA  .aim                  ; jet: direction to the enemy + a wobble by frame (as state 7)
+$00AEE2  .add_wobble
+$00AEE4  .set_pad              ; under $40 px: face it (AI_TurnToward), no direction; else press towards it
+$00AF00  .jet_far
+$00AF02  .robot
+$00AF0E  .robot_far            ; walking and blocked: .break_off
+$00AF20  .press_toward
+$00AF30  .store_pad            ; first time: mech_ai_fight_form = mech_form + 1
+$00AF44  .skip_plan
+$00AF48  .leave                ; not in the form it started in: change back first
+$00AF5E  .started_as_jet
+$00AF66  .change_back          ; tap A each visit and move (no direction: random; carrying: new random every 32 frames; blocked: one step clockwise); skips the plan
+$00AF82  .change_back_dir
+$00AFA0  .carrying_keep
+$00AFA2  .change_back_blocked
+$00AFB8  .change_back_set_dir
+$00AFCA  .change_back_wait
+$00AFCE  .end_fight            ; pad cleared; mech_ai_countdown cleared unless an alert < 0 is up; plan 4 restarts; -> 0
+$00AFE0  .check_plan4
+$00AFEE  .to_state0
+$00AFF8  .cant_land            ; random direction for 16 frames
+$00B014  .release_a            ; A still down from the tap: release it and hold a direction 16 frames. Jet: heading - 0 to 3 (! the random sign test after swap sees the whole long, so it never turns clockwise)
+$00B032  .jet_dir
+$00B054  .robot_release_a      ; no direction: random; blocked: one step clockwise (A released on these two only)
+$00B06A  .robot_blocked
+$00B080  .robot_set_dir
+$00B08E  .robot_hold
+$00B098  .break_off_move       ; A kept down; no direction: random; blocked: one step clockwise
+$00B0AE  .break_off_blocked
+$00B0C4  .break_off_set_dir
+$00B0D2  .break_off_hold
+$00B0DC  AI_TurnToward         ; obj_dir and mech_turn_to set straight to d0 (! the +/-1 step in d1 is worked out and never used); d1 kept, d6 lost
+$00B0F6  .turn
+$00B106  .done
+$00B10A  AIPadDirs             ; pad bits for 8 directions, up first, clockwise
+$00B112  AIPlanTable           ; 18 plans; 4/9/$C, 6/$E and 7/$F share handlers
+$00B15A  AIPlanModeTable       ; plan 0: 5 modes by mech_ai_mode
+$00B16E  AI_OwnUnitPtr         ; unit slot d0 -> a2 in the own team's array
+$00B186  .add_slot
+$00B18A  AI_RunStrategy        ; mode 1: strategy step mech_ai_strategy via AIStrategyTable
+$00B1A0  AIStrategyTable       ; 21 strategy steps (8/9, 10/11, 15/16 share handlers)
+$00B1F4  AI_ClearMarks         ; clear b0 of all 18 mech_ai_marks
+$00B20A  AI_StratRestart       ; 0: clear the route marks -> 1
+$00B214  AI_StratGoHome        ; 1: -> 3; buy mode substep 0 flies to the own HQ
+$00B21E  AI_StratNewRoute      ; 2: clear the route marks -> 4
+$00B228  AI_StratNextDest      ; 3: mech_ai_bought/reset_count = 0, then 4
+$00B22C  AI_StratChooseDest    ; 4: -> 5; route mode picks the next destination
+$00B236  AI_StratRouteResult   ; 5: chosen: -> 6 and count units round it; none left: -> 0; else -> 3
+$00B246  .not_chosen
+$00B256  .try_next
+$00B25E  AI_StratAtDest        ; 6: launching: buy kind 7 (up to 10); then by record flags -> 7 neutral, 8/9 P1/P2 outpost, 10/11 P1/P2 HQ (else 1)
+$00B278  .launch_buy
+$00B296  .classify
+$00B2CE  .set_class            ; a new class clears mech_ai_bought
+$00B2E0  .done
+$00B2E2  AI_StratNeutralPost   ; 7: launch point or enemies near: as an enemy outpost; else capture: kind 1, 4 at once, then paced by mech_ai_countdown, up to 8
+$00B308  .no_hq_run
+$00B30E  .contested
+$00B31A  .set_step
+$00B322  .capture              ; abandoned (mark b5) or own hold 4: next destination
+$00B338  .own_hold
+$00B352  .check_bought
+$00B358  .buy_capture          ; the bcs after the call is never taken (C is clear on return)
+$00B362  .next_dest
+$00B368  .done
+$00B36A  .pace_buys
+$00B37E  .buy_again
+$00B386  AI_StratTeamPost      ; 8/9: P1/P2 outpost: ours -> AI_StratOwnPost, theirs -> AI_StratEnemyPost; -> 5
+$00B3B2  .p2_post
+$00B3BC  AI_StratOwnPost       ; from = dest; enemy hold: kind 1; enemies near: defend (kind 2) or leave; guards up to mech_ai_style (kind 0), supply (kind 4), escort (kind 5), launch; then AI_SendToDest
+$00B3DA  .alert_done
+$00B3E6  .not_launch_point
+$00B3F4  .check_enemy_hold
+$00B400  .test_hold
+$00B40E  .no_enemy_hold
+$00B436  .guards_full
+$00B450  .go
+$00B454  .no_guards_needed     ; -> 12 (raid)
+$00B460  .check_launch_point   ; launch point: -> 19 (go for the enemy HQ)
+$00B46C  .maybe_escort         ; mark b4 set: buy kind 5 (b4 is set on the visit before)
+$00B482  .go_escort
+$00B486  .launch_from_here     ; mech_ai_launch_at_from: kind 7, up to 10
+$00B496  .launch_buy
+$00B4BC  .enemies_near         ; ! reads the wrong table: P1 code bytes at $C330+, P2 AIBuyScriptTable+ (the constants don't cancel as in AI_StratEnemyPost); non-zero: defend
+$00B4DA  .table_row
+$00B502  .check_bought
+$00B50C  .give_up_launch
+$00B51E  .leave
+$00B532  .next_dest
+$00B53A  .defend               ; kind 2, then AI_EnterResetMode; unreachable code follows ($B546)
+$00B54E  AI_StratEnemyPost     ; launch point or under 15 bought: attack (kind 1, outnumbered: kind 6; at 6 bought fall back to from); else give up; unreachable code at $B5A8
+$00B56C  .table_row
+$00B598  .not_abandoned
+$00B5E0  .check_bought
+$00B5EA  .give_up_launch
+$00B5FC  .leave_now
+$00B5FE  .attack
+$00B60E  .enemies_near
+$00B61A  .outnumbered
+$00B62E  .buy_assault
+$00B632  .buy
+$00B63A  .leave
+$00B64E  .next_dest
+$00B656  AI_StratTeamHQ        ; 10/11: P1/P2 HQ: ours -> AI_StratOwnHQ, theirs -> AI_StratEnemyHQ; -> 5
+$00B672  .p2_hq
+$00B67C  AI_StratOwnHQ         ; enemies near: patrol (kind 2) / reset; garrison 4 (8 once mark b1): kind 0; full: supply (kind 4); over by 1: escort (kind 5)
+$00B69E  .compare_garrison
+$00B6B2  .garrison_full        ; ! mark b2 is set and cleared again, so the supply is bought on every such visit
+$00B6D0  .go
+$00B6D4  .garrison_over
+$00B6EE  .go_escort
+$00B6F2  .under_attack
+$00B702  .buy_patrol
+$00B70E  AI_HQDefenceTick      ; step := 12; defending (mech_ai_alert_taken < 0): count down, hold at the HQ and return from the caller; at 0 end the defence -> 17, dest = mech_ai_next_dest
+$00B738  .hold_at_hq
+$00B770  .fly_back
+$00B77E  .defence_over
+$00B78C  .got_hq
+$00B7A2  .done
+$00B7A4  AI_StratEnemyHQ       ; hq_attack/hq_run = $FF; 10 bought: fall back to from; else kind 3 (variant 1 when not outnumbered) or kind 7 on ST maps (variant 2)
+$00B7C2  .pick_kind
+$00B7D8  .outnumbered
+$00B7F2  .kind_3
+$00B7F6  .buy                  ; the style/reset_count tests change nothing: every branch makes the same call
+$00B800  .buy_now
+$00B808  .style_0_or_1
+$00B820  .style_0
+$00B82E  AI_StratRaid          ; 12: 50%: kind 7 (INFANTRY on raid maps, ST on ST maps; not while carrying the wrong type), -> 16; else fly to the dest
+$00B864  .inf_raid
+$00B886  .st_map
+$00B8A6  .st_raid
+$00B8C8  AI_StratHQAlarm       ; 13: mech_ai_next_dest = the enemy's outpost nearest the own HQ if fuel allows the round trip; -> 0; countdown $78
+$00B8E0  .own_hq
+$00B8FA  .found
+$00B91C  .target_it
+$00B920  .restore
+$00B932  AI_StratAlertOutpost  ; 14: dest = record mech_ai_alert_post; -> 5
+$00B95E  AI_StratFlyToDest     ; 15/16: from = dest, plan $C to it; -> 3
+$00B978  AI_StratResume        ; 17 (after a respawn or an HQ defence): clear the route marks -> 18
+$00B988  AI_StratCheckReach    ; 18: dest reachable from from (one way if ours): -> 20; else -> 2
+$00B9C2  .round_trip
+$00B9C8  .reachable
+$00B9D0  .new_route
+$00B9D8  AI_StratReturnToFront ; 20: from the HQ back out to from, hopping over marked records in fuel range; then launch flags; -> 5 (or 20 again)
+$00B9E6  .check_from
+$00BA0A  .check_hop
+$00BA2A  .in_reach
+$00BA42  .check_final
+$00BA60  .check_launch_from
+$00BA88  .check_launch_dest
+$00BAB2  .clear_deaths
+$00BAB6  .fly
+$00BAC4  AI_StratGoEnemyHQ     ; 19: dest = enemy HQ, from = old dest, hq_run = $FF; -> 5
+$00BAD2  .set_dest
+$00BAEC  AI_Respawned          ; once after a death: counts, back to mode 1 step 17; 15 bought or every 3rd death: abandon the dest (mark b5)
+$00BB34  .abandon_dest
+$00BB48  .clear
+$00BB66  AI_SendToDest         ; plan $C to mech_ai_dest, then plan $11 (resume set to $11 step 0)
+$00BB92  AI_SendToFrom         ; same to mech_ai_from
+$00BBBE  AI_EnterResetMode     ; mode 4 (reset, plan 5); mech_ai_reset_count + 1
+$00BBCE  AI_EnterBuyMode       ; mode 2 substep 0 (fly to the own HQ)
+$00BBDA  AI_EnterRouteMode     ; mode 3, mech_ai_route = $FF
+$00BBEC  AI_BuyAtHQ            ; d0 how many, d1 kind: money raised to 200 if lower (!); own units 0 or under 50: HQ drop cursor, mode 2 substep 2, and return from the caller too
+$00BBF2  AI_BuyAtHQ_Attack     ; same with mech_ai_attack_buy = 1
+$00BBF8  AI_BuyAtHQ_Main
+$00BC08  .check_units
+$00BC16  .own_count
+$00BC20  .set_up
+$00BC48  .at_limit             ; 50 units: plain return, C clear
+$00BC4A  AI_BuyAtPost          ; as AI_BuyAtHQ: money floor 150, outpost drop cursor
+$00BC50  AI_BuyAtPost_Attack   ; same with mech_ai_attack_buy = 1
+$00BC56  AI_BuyAtPost_Main
+$00BC66  .check_units
+$00BC74  .own_count
+$00BC7E  .set_up
+$00BCA6  .at_limit
+$00BCA8  AI_CountAroundDest    ; AI_CountAround for mech_ai_dest -> mech_ai_own_near, mech_ai_enemy_near
+$00BCCE  .scan
+$00BCEA  .store
+$00BCF8  AI_CountAround        ; own (d0) / enemy (d1) units within 5 rings of record a2 (HQ: 8; 10 on ST maps)
+$00BD1A  .scan
+$00BD36  .done
+$00BD3C  AI_PickNextDest       ; mech_ai_style b0: unmarked record nearest mech_ai_from; else AI_NextTowardEnemyHQ; -> mech_ai_dest, marked
+$00BD62  .none                 ; unreachable code follows ($BD64: the same, nearest the own HQ)
+$00BD8C  .toward_enemy_hq
+$00BD9A  .from_enemy_hq
+$00BDB2  .done
+$00BDB4  AI_MarkNearestHome    ; mark the unmarked record nearest the own HQ -> d0; Z if none
+$00BDC2  .find
+$00BDD6  .done
+$00BDD8  AI_FuelCovers         ; as AI_FuelEnoughFor without the / 3: (d1 + 50) against the fuel. ! Its only callers (plan $B steps 5, 8) pass pixels, so they ask for three times the fuel
+$00BDE8  .full_tank
+$00BDFA  .too_far
+$00BE00  AI_FuelEnoughFor      ; d1 px: (d1 + 50) / 3 < fuel: C clear; a full tank would do: +$BA = 1, C clear; else C set
+$00BE16  .full_tank
+$00BE28  .too_far
+$00BE2E  AI_FuelDestToBase     ; AI_FuelEnoughForTrip from mech_ai_dest to mech_ai_pickup_post
+$00BE4C  AI_FuelToRecord       ; AI_FuelEnoughForTrip from the mech to record a2
+$00BE62  AI_FuelPointToBase    ; AI_FuelEnoughForTrip from d1 (x:y) to mech_ai_pickup_post
+$00BE76  AI_FuelEnoughForTrip  ; same with a third extra for the way back
+$00BE92  .full_tank
+$00BEA2  .too_far
+$00BEA8  AI_RunSetupMode       ; mode 0 (game start): substep via AISetupModeSteps
+$00BEBE  AISetupModeSteps      ; 5 substeps
+$00BED2  AI_Setup_PickStyle    ; mech_ai_style: vs human from the options byte (top 2 bits); CPU vs CPU: P1 random, P2 = P1's - 2; mech_ai_engage_range = $C0 - (random 0-$3F, +$40 for odd styles) / 2
+$00BEEA  .random
+$00BEF0  .from_options
+$00BEF4  .top_two_bits
+$00BEF6  .set_style
+$00BF2C  AI_Setup_OwnHQ        ; dest = own HQ, mech_ai_hq_hp, +$C0 = its x:y; mech_ai_st_map, mech_ai_raid_map
+$00BF3A  .got_hq
+$00BF5E  .check_map5
+$00BF66  .check_map7
+$00BF6E  .set_st_map
+$00BF86  .set_raid_map
+$00BF8C  AI_Setup_EnemyHQ      ; +$C4 = enemy HQ x:y
+$00BF9A  .got_hq
+$00BFA6  AI_Setup_EnemyHeading ; mech_ai_heading = 16-way own HQ -> enemy HQ
+$00BFC6  AI_Setup_Done         ; HQ drop cursor from the heading, mech_ai_enemy_heading; mode 1, step 0, move state 0
+$00C004  AI_RunBuyMode         ; mode 2: substep via AIBuyModeSteps (AI_BuyAt* enter at 2)
+$00C01A  AIBuyModeSteps        ; 10 substeps: 0/1 go home, 2 next, 3 bought, 4 on order, 5 collect, 6 collect the old one, 7 deliver, 8 drop, 9 delivered?
+$00C042  AI_BuyMode_GoHome     ; substeps 0, 1 (AI_StratGoHome): from = dest = own HQ, goal = it, AI_FuelToRecord; mode 1, AI_SetPlan $C (the strategy runs again when it arrives)
+$00C050  .own_hq
+$00C06E  AI_BuyMode_Next       ; substep 2 (AI_BuyAt* start here): none left to buy: mode 1, and an _Attack buy whose carried order isn't $A -> AI_EnterResetMode, or strategy step 12 -> AI_SendToDest. Carrying: re-order it from the script, substep 7. A unit on order already: substep 4. Else script = AIBuyScriptTable[mech_ai_buy_variant & 3][mech_ai_buy_kind] (variant + 1), substep 3. Both via plan 1
+$00C08E  .not_attack
+$00C09C  .buy_more
+$00C0CE  .not_carrying
+$00C0E4  .new_buy
+$00C10E  .run_plan1
+$00C118  .set_substep
+$00C122  AI_BuyMode_Bought     ; substep 3 (after plan 1): mech_prod_state $FF or 3: mode 1 (give up). Else mech_ai_lifted = mech_ai_reorder (0), mech_ai_bought + 1, substep 5
+$00C130  .check_state3
+$00C13E  .bought
+$00C152  AI_BuyMode_OnOrder    ; substep 4: mech_ai_lifted = 0, substep 6
+$00C15E  AI_BuyMode_Collect    ; substep 5: lifted: substep 7. mech_prod_state 0 or $FF: substep 2. Else mech_ai_pickup_post = own outpost nearest the dest (none: mode 1); not enough fuel to get there: mech_ai_refuel = 2; AI_SetPlan 8
+$00C18C  .found_post
+$00C1B4  .go
+$00C1BA  .lifted
+$00C1C2  .nothing
+$00C1CA  AI_BuyMode_CollectOld ; substep 6 (a unit was already on order): as substep 5, but once lifted: substep 2 (re-order it for this kind)
+$00C1F8  .found_post
+$00C220  .go
+$00C226  .retry
+$00C22E  AI_BuyMode_Deliver    ; substep 7: an ST-57U: substep 9, plan $10. Kind 0: next free drop point round the dest (AIDropOffsetsHQ/Post by cursor, off-map points skipped, occupied: try the next one next frame), facing AIDropDirs, substep 8, plan 4. Other kinds, or kind 0 out of points (as kind 1): substep 9 and plan $D (kind 7 unless the dest is a launch outpost: then plan 7; an order-$A unit picked up at a launch outpost: along its AILaunchHeadings), plan $A (kind 2), or plan 6/7 (own HQ/outpost), $E/$F (another side's)
+$00C250  .next_drop_point
+$00C272  .hq_offsets
+$00C27A  .post_drop
+$00C290  .post_offsets
+$00C296  .try_point
+$00C2EA  .cell_free
+$00C2F6  .fly_to_point
+$00C302  .other_kind           ; ! after .try_point a2 is AIDropDirs, so the order-$A test reads $02
+$00C340  .launch_tables
+$00C36C  .deliver
+$00C37A  .check_kind2
+$00C38C  .by_dest_type
+$00C3A2  .check_owner
+$00C3BC  .own_dest             ; pad = AIPadDirs[mech_ai_deliver_dir], but AI_SetPlan clears it
+$00C3DA  .st_unit
+$00C3E6  .kind7
+$00C3F2  .launch
+$00C3F8  AI_BuyMode_Drop       ; substep 8 (at the drop point): substep 9, plan 3
+$00C404  AI_BuyMode_CheckDelivered ; substep 9: an empty jet or mech_ai_dropped: substep 2, mech_ai_buy_count - 1; else substep 7 again
+$00C41C  .delivered
+$00C428  AIDropDirs            ; 16-way facing for each drop point (plan 4), clockwise from up-left
+$00C430  AILaunchPostsP1       ; [map][outpost]: non-zero = a P1 launch outpost (read by P1's route and steps, and by P2's move state 13)
+$00C4B0  AILaunchHeadingsP1    ; [map][outpost]: 8-way heading plan $D flies from that launch outpost
+$00C530  AILaunchPostsP2
+$00C5B0  AILaunchHeadingsP2
+$00C630  AIBuyScriptTable      ; [variant 0-3][kind 0-7] -> AIBuyScripts entry (longs)
+$00C6B0  AIBuyScripts          ; (type, order) byte pairs, $FF $FF ends; entries overlap. 1 INF capture, 4 SUPPLY, 7 attack HQ
+$00C708  AI_RunRouteMode       ; mode 3: substep via AIRouteModeSteps
+$00C71E  AIRouteModeSteps      ; 4 substeps
+$00C72E  AI_Route_PickDest     ; clear the launch flags; AI_PickNextDest; none left: mech_ai_route = $80, mode 1
+$00C74E  .check_fuel
+$00C756  AI_Route_CheckFuel    ; from -> dest (one way if ours): short -> substep 3; own launch outpost: hq_run $80, launch; HQs: mode 1 (enemy HQ: hq_run $FF); outposts: substep 2
+$00C798  .own_dest
+$00C7A0  .fuel_ok
+$00C7B4  .table_row            ; unreachable code at $C7EA
+$00C7F2  .not_launch_point
+$00C806  .p1_hq
+$00C810  .p2_hq
+$00C818  .enemy_hq
+$00C81E  .to_strategy
+$00C824  .chosen
+$00C82A  .short_of_fuel
+$00C832  AI_Route_CheckHQReach ; enemy HQ in round-trip reach from from: dest = it, hq_run $FF; from dest: mark b6 (staging), hq_run $80; mode 1
+$00C840  .got_hq
+$00C864  .from_dest
+$00C89C  .go_for_hq
+$00C8A2  .to_strategy          ; mech_ai_route = 1 -> plan $C: nothing sets 1
+$00C8BC  .done
+$00C8BE  AI_Route_FindRefuel   ; own outpost nearest the dest, one way from the mech: from = it, substep 2; else mode 1
+$00C900  .none
+$00C904  .to_strategy
+$00C90C  AI_RunResetMode       ; mode 4: clear the plan fields, mode 1, AI_SetPlan 5
+$00C936  AI_PlanModes          ; plan 0: mode via AIPlanModeTable
+$00C94C  AI_PlanBuy            ; plan 1: buy the next affordable pair of mech_ai_buy_script (a5) through the order menu with the pad; carrying: re-order the carried unit. Step via AIPlanBuySteps
+$00C966  AIPlanBuySteps        ; 7 steps: 0 choose, 6 open menu, 1 type, 2 order, 3 release, 4 confirm, 5 close menu
+$00C982  AI_Buy_ChoosePair     ; step 0: first pair it can afford (type price + order cost); ! each pair it can't adds 100 to mech_money first. Chosen: step 6; script end: mech_prod_state = $FF, AI_ResumePlan
+$00C998  .next_pair
+$00C9A6  .price_pair
+$00C9D6  .chosen
+$00C9E2  .reorder              ; carrying: an ST, SUPPLY or GRM, or order $A while mech_ai_hq_attack is set: resume; else the first script order (type ignored) other than the current one it can afford, +50 money per one it can't
+$00C9FE  .check_hq_attack
+$00CA10  .next_order
+$00CA40  .order_chosen
+$00CA4C  AI_Buy_OpenMenu       ; step 6: release the pad, then C until the order menu is open and drawn (mech_menu_step 0); step 1, mech_ai_order_tries = 16, press delay 6 (view not shown: 0)
+$00CA58  .check_open
+$00CA68  .wait_open
+$00CA84  .set_delay
+$00CA8C  .done
+$00CA8E  AI_Buy_CloseMenu      ; step 5: release the pad, wait while closing (mech_menu_closing), C until closed, then AI_ResumePlan
+$00CA9A  .check_closed
+$00CAB0  .done
+$00CAB2  AI_Buy_PickType       ; step 1: cursor to row 0 (up from 1, down from 2), then right/left until mech_menu_type is the pair's type; each press also writes the pair's order into mech_menu_order. Carrying: nothing to do. Presses paced by mech_ai_pad_delay
+$00CAD0  .to_row0
+$00CAE6  .press_row
+$00CAF8  .press_down
+$00CAFC  .store_pad
+$00CB02  .on_row0
+$00CB16  .check_type
+$00CB30  .press_lr             ; type below the wanted one: right, else left
+$00CB40  .press_left
+$00CB44  .store_lr
+$00CB50  .done
+$00CB52  .next_step
+$00CB5C  AI_Buy_PickOrder      ; step 2: carrying with that order already: step 5. Cursor to row 1 (down from 0, up from 2), then right/left until mech_menu_order is the pair's order; after 17 presses: give up (step 5)
+$00CB78  .to_row1
+$00CB8C  .check_row
+$00CBA6  .press_row
+$00CBB8  .press_up
+$00CBBC  .store_pad
+$00CBC2  .on_row1
+$00CBD8  .check_order
+$00CBF4  .press_lr
+$00CC04  .press_left
+$00CC08  .store_lr
+$00CC20  .next_step
+$00CC28  .done
+$00CC2A  AI_Buy_Release        ; step 3: a frame with the pad released
+$00CC34  AI_Buy_Confirm        ; step 4: B, then read mech_prod_state (carrying: mech_reorder_state): 0 press again; $FF (short of money) or 3: the next pair from step 1 (script end: step 5); else step 5. ? nothing writes 3
+$00CC42  .released
+$00CC5C  .check_state
+$00CC6E  .next_pair
+$00CC80  .script_done
+$00CC84  .done
+$00CC86  AI_PlanLift           ; plan 2 (nothing starts it): tap A to lift a unit; carrying afterwards: mech_ai_lifted = $FF. Landed instead: tap A until airborne. Then AI_ResumePlan
+$00CC9A  .check_step
+$00CCAE  .tapped
+$00CCBE  .check_carrying
+$00CCCA  .resume
+$00CCCE  .take_off             ; step 2
+$00CCDC  .take_off_tapped
+$00CCF2  .take_off_resume
+$00CCF6  .still_robot
+$00CCF8  AI_PlanDrop           ; plan 3 (buy mode substep 8): tap A to put the carried unit down; an empty jet afterwards: mech_ai_dropped = $FF. Landed instead: tap A until airborne. Then AI_ResumePlan
+$00CD0C  .check_step
+$00CD20  .tapped
+$00CD30  .check_dropped
+$00CD3C  .resume
+$00CD40  .take_off             ; step 2
+$00CD4E  .take_off_tapped
+$00CD5C  AI_PlanFlyToGoal      ; plans 4, 9, $C: fly to mech_ai_goal_x/y. In the arrival box (-$2C..+$C): direction released; 9 and $C: AI_ResumePlan; 4: turn to mech_ai_heading. Else the step via AIPlanFlySteps
+$00CDA6  .run_step
+$00CDBC  AIPlanFlySteps        ; 6 steps: 0 course, 1 arrived?, 2/3 turn to mech_ai_heading, 4 watch the enemy mech, 5 (plan 9) re-target
+$00CDD4  AI_Fly_SetCourse      ; step 0: mech_ai_course = pad direction to the goal - $10; pressed unless a detour runs; untouched when already flying within 1 of it and $80+ px out; -> 1
+$00CE1E  .check_heading        ; |direction - heading| is not wrapped
+$00CE24  .new_course
+$00CE38  .store_course
+$00CE3C  .next_step
+$00CE44  AI_Fly_CheckArrived   ; step 1: in the box: direction released; 9 and $C: AI_ResumePlan; 4: step 3; else step 4
+$00CE92  .not_there
+$00CE9A  AI_Fly_WatchEnemy     ; step 4 (only carrying, on plan 9, or blocked by an object): enemy mech in range within 4 steps of the heading: plan 9 with it within $80 of the goal: another own outpost as the goal; else mech_ai_engage $FF -> $80 and a 16-frame detour (mech_ai_detour) 90 degrees away (under half range) or 45. Next: step 0 (plan 9: 5)
+$00CEC4  .check_enemy
+$00CEFA  .enemy_ahead
+$00CF48  .allow_fight
+$00CF54  .dodge
+$00CF68  .turn_90
+$00CF6A  .turn_45
+$00CF74  .start_detour
+$00CFA4  .no_threat
+$00CFAA  .detouring            ; every other frame: course 3 to 5 8-way steps off the heading: turn the pad one step towards it
+$00CFE6  .turn_left
+$00CFE8  .set_dir
+$00D002  .count_detour
+$00D00E  .back_on_course       ; pad direction = mech_ai_course, detour cleared
+$00D030  .set_step
+$00D036  AI_Fly_TurnToHeading  ; steps 2, 3: mech_ai_heading none or reached: AI_ResumePlan; else one step towards it every 4th frame (this one does step)
+$00D060  .turn_left
+$00D062  .store
+$00D06E  .done
+$00D070  AI_Fly_Retarget       ; step 5 (plan 9): goal = nearest own outpost; step 0
+$00D07C  .next_step
+$00D082  AIPadToDir8           ; pad direction bits -> 8-way direction (0 up, clockwise), $FF none or two opposite; plans 4 and 6. 16 more bytes follow: 16-way heading -> pad bits (no reader found)
+$00D0A2  AI_PlanGroundAttack   ; plan 5 (reset mode: round mech_ai_dest; plan 8 via AI_CallPlan: round itself; plan $A switches to it at step 5 or 6): land near the nearest enemy and shoot it on foot until none is left, then take off and AI_ResumePlan. No ammo: straight to step 6. mech_ai_engage $FF -> $80; nothing while transforming. Step via AIPlanGroundSteps. Move state 1 and AI_KeepOffEdges leave plan 5 alone
+$00D0B6  .check_transform
+$00D0D2  .transforming
+$00D0D4  AIPlanGroundSteps     ; 9 steps: 0 find target, 1 box, 2 form, 3 fly in, 4 land, 5 walk, 7 shoot, 8 reposition, 6 take off and end
+$00D0F8  AI_Ground_FindTarget  ; step 0: scan 6 rings (HQ 9, 11 on ST maps) round mech_ai_dest (mech_ai_heading set, as buy mode leaves it for plan $A: mech_ai_pickup_post; mech_ai_attack_here set: itself, see .ring_count); the first enemy id (nearest ring first) -> mech_ai_target, step 1. No enemy: step 6
+$00D104  .pick_centre
+$00D110  .centre_record
+$00D122  .move_to_record       ; obj_x/y = the record's x:y for the scan (restored after)
+$00D128  .ring_count           ; by the record at a2. ! Round itself a2 is still the step handler ($D0F8), so the HQ test reads a code byte: always 6 rings
+$00D140  .scan
+$00D15A  .count_enemies        ; enemy side's mech + unit counts from v_scan_counts
+$00D168  .next_id              ; skip ring separators and own-team ids
+$00D186  .no_enemy
+$00D18E  AI_Ground_SetBox      ; step 1: mech_ai_goal_x/y = the target's x/y (mech: a1, the other mech; unit: its slot = id & $3F - 1); box = (goal & ~7) +/- $40 (an ST-57U: $100), clamped to 0..$7E0; step 2
+$00D1A0  .unit_target
+$00D1AC  .unit_slot
+$00D1CE  .box_x
+$00D1E2  .store_left
+$00D1F2  .store_right
+$00D20A  .store_top
+$00D21A  .store_bottom
+$00D224  AI_Ground_CheckForm   ; step 2: release A; robot: step 5; jet: a random 8-way direction if none is held, step 3
+$00D25C  .to_fly_in
+$00D264  .on_foot
+$00D26C  AI_Ground_FlyIn       ; step 3: outside the box: pad towards the goal, mech_ai_scan_dir = 0, then step 0 (mech_ai_dropped set: step 4). Inside (exclusive): mech_ai_dropped = $FF; mech_ai_scan_dir 0: release A, step 4; else count it down, keep a held direction (step 0) or pick a random one (step 4)
+$00D2A2  .fly_on
+$00D2BA  .y_outside
+$00D2C2  .x_outside
+$00D2C8  .head_for_goal
+$00D2DA  .set_dir
+$00D306  .rescan
+$00D30C  AI_Ground_Land        ; step 4: A not held: tap it if the grid cell below is free, else step 2. A held: release; landed: step 2; still a jet: pad one 8-way step either way (random), step 2 (carrying: tap A again)
+$00D328  .press_a
+$00D330  .tapped
+$00D344  .still_jet
+$00D356  .nudge
+$00D38E  .done
+$00D390  AI_Ground_Walk        ; step 5: mech_ai_aim_dir = direction (own +$10) -> (goal +8). $30+ px away, not blocked, not on terrain event 6 on map 0: walk towards it; else stand and turn obj_dir one step a frame towards it. Release B, step 7
+$00D3D8  .walk
+$00D3F6  .stand
+$00D410  .turn
+$00D420  .release_b
+$00D42E  AI_Ground_Shoot       ; step 7: facing mech_ai_aim_dir: B and mech_ai_ground_shot = $FF (step 0), then read mech_shot_flags. Enemy unit hit: halve the HP of unit mech_hit_victim (slot + 1: the next unit, as UnitAI_CheckShotResult); enemy mech hit: nothing more; own side or HQ hit: step 8. 3 misses in a row (mech_ai_misses_left), or blocked walking: step 8. Else step 0
+$00D44E  .check_result
+$00D494  .hit_p1_mech
+$00D49E  .hit_p2_mech
+$00D4A6  .hit_team1            ; ! victim < $32; $32 is team 1's slot 49, so it counts as team 2
+$00D4AE  .hit_team2
+$00D4B6  .not_facing           ; walking and blocked: step 8; else step 0. Unreachable code follows ($D4CC, a copy of these tests)
+$00D4E2  .missed
+$00D4F6  .count_miss
+$00D4FC  .reposition
+$00D50A  .halve_hp             ; active, not dying, flags b6 clear
+$00D520  .reset_misses
+$00D526  .rescan
+$00D52C  AI_Ground_Reposition  ; step 8: robot: toggle A until airborne (direction: none: random; blocked: one 8-way step clockwise). Jet: keep only the direction, mech_ai_scan_dir = 24 (laps to fly on before landing), step 2
+$00D54E  .check_blocked
+$00D564  .set_dir
+$00D576  .done
+$00D578  .airborne
+$00D58C  AI_Ground_End         ; step 6 (and whenever out of ammo): robot: toggle A until airborne, as step 8; jet: AI_ResumePlan
+$00D5B0  .check_blocked
+$00D5C6  .set_dir
+$00D5D8  .done
+$00D5DA  AI_PlanDeliverHQ      ; plans 6 (own HQ) and $E (another side's), from buy mode substep 7: fly the carried unit to mech_ai_dest and drop it between the inner and outer box round the goal; not carrying any more: AI_ResumePlan. Step via AIPlanDeliverHQSteps
+$00D5F0  AIPlanDeliverHQSteps  ; 4 steps: 0 zone, 1 fly in, 2 drop, 3 watch the enemy mech
+$00D600  AI_DeliverHQ_SetZone  ; step 0: goal = the dest record's x:y - 16 (plan $E: + random -64..63 each), clamped to 8..$7D8; outer box goal - r1 .. goal + r2 (random $80-$BF each), inner box goal - $40 .. goal + $60, clamped to 8..$7D8. mech_ai_scan_dir = 0, step 1
+$00D62A  .set_goal_x
+$00D656  .goal_x_high
+$00D660  .goal_x_ok
+$00D662  .goal_x_neg
+$00D666  .store_goal_x
+$00D676  .left_min
+$00D682  .store_left
+$00D696  .store_right
+$00D6A8  .inner_left_min
+$00D6B4  .store_inner_left
+$00D6C6  .store_inner_right
+$00D6E0  .goal_y_high
+$00D6EA  .goal_y_ok
+$00D6EC  .goal_y_neg
+$00D6F0  .store_goal_y
+$00D702  .store_bottom
+$00D714  .top_min
+$00D720  .store_top
+$00D732  .inner_top_min
+$00D73E  .store_inner_top
+$00D750  .store_inner_bottom
+$00D75E  AI_DeliverHQ_FlyIn    ; step 1: not carrying: AI_ResumePlan. In the inner box: keep flying; stopped: random course, step 3. In the outer box: mech_ai_scan_dir 0: release A, step 2; else count it down, stopped: random course, step 3. Outside: course (mech_ai_course) to the goal when stopped, under $80 px or 3+ steps off. Then within mech_ai_engage_range + $C1 of the goal with a missile homing in, mech_ai_needs_service or mech_ai_engage set: step 2 (drop now); else step 3
+$00D79A  .keep_flying
+$00D79C  .x_outside_inner
+$00D79E  .check_outer
+$00D7BE  .drop
+$00D7CA  .count_down           ; ! moving: on to .check_threats with d7 unset (left over from the move state)
+$00D7E4  .x_outside
+$00D7EC  .y_outside
+$00D7F2  .head_for_goal
+$00D820  .check_course         ; |direction - heading| is not wrapped
+$00D826  .set_course
+$00D840  .check_threats        ; d7 = distance to the goal
+$00D854  .check_service
+$00D860  .check_engage
+$00D86C  .to_watch
+$00D874  AI_DeliverHQ_Drop     ; step 2: tap A. Still carrying: course one 8-way step either way (random), mech_ai_scan_dir = 4, step 1. Empty jet: AI_ResumePlan. Robot: tap again
+$00D886  .tapped
+$00D8A8  .nudge
+$00D8CE  .not_carrying
+$00D8D6  AI_DeliverHQ_WatchEnemy ; step 3, as AI_Fly_WatchEnemy but every visit: enemy mech in range within 4 steps of the heading: within $C8 of the goal (plan $E: $190): release A, step 2 (drop here); else a 16-frame detour (mech_ai_detour) 90 degrees away (under half range) or 45. Otherwise the detour runs out, or the pad goes back on course. Next: step 1
+$00D916  .enemy_ahead
+$00D926  .check_near_goal
+$00D958  .dodge
+$00D96C  .turn_90
+$00D96E  .turn_45
+$00D978  .start_detour
+$00D9A0  .no_threat
+$00D9A6  .detouring            ; every other frame: course 3 to 5 8-way steps off the heading: turn the pad one step towards it
+$00D9E2  .turn_left
+$00D9E4  .set_dir
+$00D9FE  .count_detour
+$00DA0C  .back_on_course       ; pad direction = mech_ai_course, detour cleared
+$00DA1C  .store_pad
+$00DA28  AI_PlanDeliverPost    ; plans 7 (own outpost; also kind 7 when the dest is a launch outpost) and $F (another side's outpost), from buy mode substep 7: a copy of AI_PlanDeliverHQ with a tighter ring. Step via AIPlanDeliverPostSteps
+$00DA3E  AIPlanDeliverPostSteps ; 4 steps: 0 zone, 1 fly in, 2 drop, 3 watch the enemy mech
+$00DA4E  AI_DeliverPost_SetZone ; step 0: as AI_DeliverHQ_SetZone, outer box random $60-$9F, inner box goal - $20 .. goal + $40. ! It tests for plan 6, so plans 7 and $F both take the random offset (never the -16)
+$00DA78  .set_goal_x
+$00DAA4  .goal_x_high
+$00DAAE  .goal_x_ok
+$00DAB0  .goal_x_neg
+$00DAB4  .store_goal_x
+$00DAC4  .left_min
+$00DAD0  .store_left
+$00DAE4  .store_right
+$00DAF6  .inner_left_min
+$00DB02  .store_inner_left
+$00DB14  .store_inner_right
+$00DB2E  .goal_y_high
+$00DB38  .goal_y_ok
+$00DB3A  .goal_y_neg
+$00DB3E  .store_goal_y
+$00DB50  .store_bottom
+$00DB62  .top_min
+$00DB6E  .store_top
+$00DB80  .inner_top_min
+$00DB8C  .store_inner_top
+$00DB9E  .store_inner_bottom
+$00DBAC  AI_DeliverPost_FlyIn  ; step 1: as AI_DeliverHQ_FlyIn; drops early within mech_ai_engage_range + $60 of the goal
+$00DBE8  .keep_flying
+$00DBEA  .x_outside_inner
+$00DBEC  .check_outer
+$00DC0C  .drop
+$00DC18  .count_down           ; ! moving: on to .check_threats with d7 unset (left over from the move state)
+$00DC32  .x_outside
+$00DC3A  .y_outside
+$00DC40  .head_for_goal
+$00DC6E  .check_course         ; |direction - heading| is not wrapped
+$00DC74  .set_course
+$00DC8E  .check_threats        ; d7 = distance to the goal
+$00DCA2  .check_service
+$00DCAE  .check_engage
+$00DCBA  .to_watch
+$00DCC2  AI_DeliverPost_Drop   ; step 2: as AI_DeliverHQ_Drop (random sign from bit 2, not bit 6)
+$00DCD4  .tapped
+$00DCF6  .nudge
+$00DD1C  .not_carrying
+$00DD24  AI_DeliverPost_WatchEnemy ; step 3: as AI_DeliverHQ_WatchEnemy (plan $F: $190)
+$00DD64  .enemy_ahead
+$00DD74  .check_near_goal
+$00DDA6  .dodge
+$00DDBA  .turn_90
+$00DDBC  .turn_45
+$00DDC6  .start_detour
+$00DDEE  .no_threat
+$00DDF4  .detouring            ; every other frame: course 3 to 5 8-way steps off the heading: turn the pad one step towards it
+$00DE30  .turn_left
+$00DE32  .set_dir
+$00DE4C  .count_detour
+$00DE5A  .back_on_course       ; pad direction = mech_ai_course, detour cleared
+$00DE6A  .store_pad
+$00DE76  AI_PlanPickUp         ; plan 8 (buy mode substeps 5, 6): fly to mech_ai_pickup_post (- $10) and collect the bought unit with A; carrying it: mech_ai_lifted = $FF. Still being built: plan 5 round itself while it waits. Step via AIPlanPickUpSteps
+$00DE8C  AIPlanPickUpSteps     ; 6 steps: 0 start, 1 course, 5 watch the enemy mech, 2 arrived?, 3 lifted?, 4 take off
+$00DEA4  AI_PickUp_Start       ; step 0: already carrying: mech_ai_lifted = $FF, AI_ResumePlan; else mech_ai_lifted = 0, step 1
+$00DEB8  .not_carrying
+$00DEC2  AI_PickUp_SetCourse   ; step 1: carrying: AI_ResumePlan (? mech_ai_lifted stays 0). mech_ai_course towards the pickup post - $10 when no direction is held, $80 px or less out, or 3+ steps off the heading; step 5
+$00DF08  .check_course         ; |heading - direction| is not wrapped
+$00DF0E  .set_course
+$00DF20  .to_watch
+$00DF28  AI_PickUp_WatchEnemy  ; step 5, as AI_Fly_WatchEnemy: enemy mech (not flags b5/b6, unless blocked by an object) in range within 4 steps of the heading: within $80 of the pickup post: mech_ai_engage and mech_ai_hq_attack $FF -> $80, no detour; else a 16-frame detour 90 degrees away (under half range) or 45. Otherwise the detour runs out, or the pad goes back on course. Next: step 2
+$00DF3C  .check_enemy
+$00DF72  .enemy_ahead
+$00DFAA  .check_hq_attack
+$00DFB8  .dodge
+$00DFCC  .turn_90
+$00DFCE  .turn_45
+$00DFD8  .start_detour
+$00E000  .no_threat
+$00E006  .detouring            ; every other frame: course 3 to 5 8-way steps off the heading: turn the pad one step towards it
+$00E042  .turn_left
+$00E044  .set_dir
+$00E05E  .count_detour
+$00E06C  .back_on_course       ; pad direction = mech_ai_course, detour cleared
+$00E07C  .store_pad
+$00E088  AI_PickUp_CheckArrived ; step 2: within $1C of the pickup post - $10: mech_prod_state 2 (ready): A, step 3; 0 or $FF: AI_ResumePlan; building: the post still ours: AI_CallPlan 5 round itself (mech_ai_attack_here), else AI_ResumePlan. Not there: step 1. Unreachable code follows ($E13A: step 5, rts)
+$00E126  .lift
+$00E132  .not_there
+$00E142  AI_PickUp_CheckLifted ; step 3: keep only the direction. Carrying: mech_ai_lifted = $FF, AI_ResumePlan. Landed instead: step 4. Empty jet: the post still ours: step 1, else AI_ResumePlan
+$00E15C  .not_carrying
+$00E168  .retry
+$00E190  AI_PickUp_TakeOff     ; step 4: carrying: mech_ai_lifted = $FF, AI_ResumePlan. Robot: toggle A until airborne; then pad cleared, step 1
+$00E1A4  .not_carrying
+$00E1BC  .press_a
+$00E1C4  .airborne
+$00E1D0  AI_PlanDeliverToEnemy ; plan $A (buy mode substep 7, kind 2: defenders): fly the carried unit to the nearest enemy round mech_ai_dest and drop it in a box round that enemy; then fight on foot (plan 5 from step 5). No enemy: deliver as usual (plan 6 at an HQ, 7 at an outpost). Step via AIPlanDeliverToEnemySteps
+$00E1E6  AIPlanDeliverToEnemySteps ; 6 steps: 0 find target, 1 box, 2 form, 3 fly in, 5 watch the enemy mech, 4 drop
+$00E1FE  AI_ToEnemy_FindTarget ; step 0: scan 6 rings round mech_ai_dest; the first enemy id -> mech_ai_target, step 1. None: carrying: plan 6 (HQ) or 7 (outpost) at step 0; else plan 5 step 6 (take off, AI_ResumePlan)
+$00E228  .count_enemies        ; enemy side's mech + unit counts from v_scan_counts
+$00E236  .next_id              ; skip ring separators and own-team ids
+$00E254  .no_enemy
+$00E26A  .deliver_normally
+$00E27E  .set_plan
+$00E288  AI_ToEnemy_SetBox     ; step 1: mech_ai_goal_x/y = the target's x/y (mech: a1; unit: slot = id & $3F - 1); box = (goal & ~7) +/- $80, clamped to 8..$7D8; step 2
+$00E298  .unit_target
+$00E2A4  .unit_slot
+$00E2B6  .box_x
+$00E2D2  .left_min
+$00E2DE  .store_left
+$00E2EE  .store_right
+$00E30A  .top_min
+$00E316  .store_top
+$00E326  .store_bottom
+$00E330  AI_ToEnemy_CheckForm  ; step 2: not carrying (unit gone): plan 5 at step 5 (walk to the target and shoot). Carrying: a random course if no direction is held; step 3
+$00E35A  .next_step
+$00E360  .not_carrying
+$00E36E  AI_ToEnemy_FlyIn      ; step 3: in the box (inclusive): mech_ai_scan_dir 0: release A, step 4; else count it down, stopped: random course, step 5. Outside: course to the goal, then within mech_ai_engage_range + $80 with a missile homing in, mech_ai_needs_service or mech_ai_engage set: step 4 (drop now); else step 5. ! That "distance" is d1 after GetDirection, which keeps d1: mech_ai_goal_x
+$00E392  .drop
+$00E39E  .count_down
+$00E3B8  .y_outside
+$00E3C0  .x_outside
+$00E3C6  .head_for_goal
+$00E3DA  .set_course
+$00E408  .check_service
+$00E414  .check_engage
+$00E420  .to_watch
+$00E428  AI_ToEnemy_Drop       ; step 4: tap A. Empty jet: AI_ResumePlan. Else course one 8-way step either way (random), mech_ai_scan_dir = 6, step 0 (look again)
+$00E43A  .tapped
+$00E45A  .nudge
+$00E47E  .dropped
+$00E482  AI_ToEnemy_WatchEnemy ; step 5, as AI_DeliverHQ_WatchEnemy: enemy mech ahead in range within $C8 of the goal: release A, step 4 (drop here); else a 16-frame detour. Next: step 3
+$00E4C2  .enemy_ahead
+$00E4F8  .dodge
+$00E50C  .turn_90
+$00E50E  .turn_45
+$00E518  .start_detour
+$00E540  .no_threat
+$00E546  .detouring            ; every other frame: course 3 to 5 8-way steps off the heading: turn the pad one step towards it
+$00E582  .turn_left
+$00E584  .set_dir
+$00E59E  .count_detour
+$00E5AC  .back_on_course       ; pad direction = mech_ai_course, detour cleared
+$00E5BC  .store_pad
+$00E5C8  AI_PlanServiceUnit    ; plan $B (from plan $11, own unit in mech_ai_service_unit): fly to the unit, lift it, take it to the nearest own outpost, fill it up (fuel, HP, ammo, missiles straight from UnitStats) and put it back near where it was. Fuel short, the unit gone or busy: AI_ResumePlan. Step via AIPlanServiceSteps
+$00E5DE  AIPlanServiceSteps    ; 13 steps: 0 to the unit, 11 watch the enemy mech (then step mech_ai_misses_left), 1 over it?, 2 lifted?, 3 take off, 4 pick outpost, 5 to it, 6 on it?, 7 refill, 12 pick return point, 8 to it, 9 there?, 10 dropped?
+$00E612  AI_Service_GoToUnit   ; step 0: robot: step 3. Carrying: AI_ResumePlan. Unit inactive, dying, carried or held by a SUPPLY: AI_ResumePlan; during an HQ attack a unit without order $A must be within $170 of the enemy HQ (! the test uses the unit's y as x and a stale d2). Not enough fuel for the round trip: AI_ResumePlan. mech_ai_course to it (kept while 2 steps or less off and $80+ px out); step 11, then 1
+$00E620  .jet
+$00E656  .check_hq_range
+$00E676  .set_course
+$00E6AC  .check_course
+$00E6B2  .new_course
+$00E6C4  .to_watch
+$00E6D2  AI_Service_WatchEnemy ; step 11, as AI_PickUp_WatchEnemy without the goal test (distance: AI_GetDirection's |dx| + |dy|): enemy mech in range within 4 steps of the heading: 16-frame detour; else the detour runs out or the pad goes back on course. Next: step mech_ai_misses_left
+$00E6E6  .check_enemy
+$00E71A  .dodge
+$00E72E  .turn_90
+$00E730  .turn_45
+$00E73A  .start_detour
+$00E762  .no_threat
+$00E768  .detouring            ; every other frame: course 3 to 5 8-way steps off the heading: turn the pad one step towards it
+$00E7A4  .turn_left
+$00E7A6  .set_dir
+$00E7C0  .count_detour
+$00E7CE  .back_on_course       ; pad direction = mech_ai_course, detour cleared
+$00E7DE  .store_pad
+$00E7EA  AI_Service_CheckAtUnit ; step 1: within -$18..+$8 of the unit: A, step 2; else step 0
+$00E824  .not_there
+$00E82A  AI_Service_CheckLifted ; step 2: release A. Carrying: mech_ai_unused_flag = $FF, step 4. Landed: step 3. Empty jet: step 0
+$00E83C  .airborne
+$00E84E  .retry
+$00E854  AI_Service_TakeOff    ; step 3: tap A until airborne (then step 0); on foot with no direction or blocked: a random 8-way direction
+$00E866  .tapped
+$00E878  .still_robot
+$00E88C  .random_dir
+$00E8A0  .done
+$00E8A2  AI_Service_PickPost   ; step 4: mech_ai_service_unit = the carried unit; mech_ai_service_post = the nearest own outpost (none: AI_ResumePlan); step 5
+$00E8C2  AI_Service_GoToPost   ; step 5: course to mech_ai_service_post as step 0; AI_FuelCovers short: AI_ResumePlan; step 11, then 6
+$00E8FC  .check_course
+$00E902  .new_course
+$00E914  .to_watch
+$00E922  AI_Service_CheckAtPost ; step 6: still ours and within -$2C..+$C: pad cleared, step 7; else step 4
+$00E970  .not_there
+$00E978  AI_Service_Refill     ; step 7: fuel, HP, ammo and missiles set to the unit type's full values, step 12, mech_ai_heading = 16 (drop tries). With the order menu open (flags b6) it waits (step 6) until the unit has half of each
+$00E9C4  .refill
+$00E9EA  .wait
+$00E9F2  AI_Service_PickDropPoint ; step 12: orders 0, 2: AI_ResumePlan still carrying it. Orders 3, 9, $A: $80 px on from where it was lifted towards unit_dest_dir (0: unit_turn_to); other orders: unit +$1D set: $80 px along unit_turn_to, else the lift point itself (the unit's x:y don't move while carried). Clamped to 8..$7D8 -> mech_ai_return_x/y; release A, step 8
+$00EA18  .toward_goal
+$00EA24  .other_order
+$00EA34  .along_heading
+$00EA3A  .offset
+$00EA54  .x_min
+$00EA5E  .x_max
+$00EA68  .store_x
+$00EA78  .y_min
+$00EA82  .y_max
+$00EA8C  .store_y
+$00EA90  .next_step
+$00EA9E  AIReturnOffsets       ; 8 x (dx, dy) words, $80 px in each 8-way direction, up first, clockwise ($7F / -$80)
+$00EABE  AI_Service_GoBack     ; step 8: not carrying: AI_ResumePlan. Course to mech_ai_return_x/y as step 0; AI_FuelCovers short: AI_ResumePlan; step 11, then 9
+$00EAFE  .check_course
+$00EB04  .new_course
+$00EB16  .to_watch
+$00EB24  AI_Service_CheckAtDrop ; step 9: within -$18..+$8 of the return point: A, step 10. Within -$58..+$48 after a failed drop: A 1 time in 4 (step 10), else stay. Farther: step 8. mech_ai_needs_service: A at once. ? Farther away that sets step 9 again every visit, so it never reaches step 10 while the need lasts
+$00EB5A  .x_outside
+$00EB5C  .check_near
+$00EB96  .press_a
+$00EBA2  .re_aim
+$00EBA8  .check_service
+$00EBB0  AI_Service_CheckDropped ; step 10: release A. Dropped (empty jet or robot): AI_ResumePlan. Still carrying: mech_ai_heading - 1 (0: AI_ResumePlan, still carrying), random course, step 9
+$00EBE6  AI_PlanLaunch         ; plan $D (buy mode substep 7: kind 7 when the dest is not a launch outpost, or an order-$A unit collected at a launch outpost): fly off along mech_ai_heading (none: towards the enemy HQ) and drop the unit at the first chance. Step via AIPlanLaunchSteps
+$00EBFC  AIPlanLaunchSteps     ; 4 steps: 0 heading, 1 drop, 2 dropped?, 3 next heading
+$00EC0C  AI_Launch_SetHeading  ; step 0: mech_ai_heading $FF: the 8-way direction to the enemy HQ instead; pad = that direction; mech_ai_scan_dir and mech_ai_aim_dir = 0; step 1
+$00EC22  .enemy_hq
+$00EC3A  .set_heading
+$00EC54  AI_Launch_Drop        ; step 1: mech_ai_scan_dir 0: A, step 2; else count it down
+$00EC66  .count_down
+$00EC6E  AI_Launch_CheckDropped ; step 2: release A. Dropped: AI_ResumePlan. Still carrying: step 1 after 6 frames, mech_ai_aim_dir + 1 (failed drops): at 12 turn the pad round (heading + 8); at 24 fly back to mech_ai_pickup_post (AI_CallPlan $C), then step 3
+$00ECB8  .check_give_up
+$00ECD4  .done
+$00ECD6  AI_Launch_NextHeading ; step 3 (back at the pickup post): mech_ai_heading + 1 (8-way), pad that way, counters cleared, step 1
+$00ECFE  AI_PlanDeliverST      ; plan $10 (buy mode substep 7, carrying an ST-57U): look round for a block tile with b9 (? water) and drop the ST on it; none in reach: fly towards the enemy HQ for 16 frames and look again. Step via AIPlanDeliverSTSteps
+$00ED14  AIPlanDeliverSTSteps  ; 6 steps: 0 start, 1 look, 2 fly in, 3 towards the enemy HQ, 4 drop, 5 dropped?
+$00ED2C  AI_DeliverST_Start    ; step 0: mech_ai_heading = +1 or -1 at random (which way it curves in), counters cleared; step 1 (same frame)
+$00ED3A  .set_turn
+$00ED48  AI_DeliverST_Look     ; step 1: AI_ScanBlocksInDir in direction mech_ai_scan_dir: found: mech_ai_goal_x/y = it, pad towards it, step 2. Else the next of 8 directions, one a frame; all 8 missed: pad towards the enemy HQ, 16 frames, step 3
+$00ED60  .found
+$00ED8C  .none_found
+$00ED9A  .enemy_hq
+$00EDCC  AI_DeliverST_FlyIn    ; step 2: $80+ px out: pad towards the goal. Closer: 45 degrees off it (side by mech_ai_heading) while mech_ai_scan_dir counts down (it starts at the direction index step 1 stopped on), then release A, step 4
+$00EDF2  .turn_left
+$00EDF4  .check_count
+$00EE0E  .count_down
+$00EE14  .set_pad              ; only the direction bits go into the pad (d1, with the buttons kept, is built and not used)
+$00EE2E  AI_DeliverST_TowardHQ ; step 3: mech_ai_scan_dir frames on, then step 0
+$00EE3A  .count_down
+$00EE42  AI_DeliverST_Drop     ; step 4: A, step 5
+$00EE50  AI_DeliverST_CheckDropped ; step 5: release A. Dropped: AI_ResumePlan. Still carrying: step 2 with 8 frames, mech_ai_aim_dir + 1 (failed drops); at 16 step 0 (look again)
+$00EE82  .done
+$00EE84  AI_PlanTendUnits      ; plan $11 (AI_SendToDest/From after plan $C): own HQ hurt or enemies round it: AI_ResumePlan. Not within -$2C..+$C of mech_ai_goal: AI_CallPlan $C back there. Else check one own unit a frame (cursor mech_ai_attack_buy, 0-49; any unit, no distance test): HP under 1/4, no fuel, no ammo (SAM: no missiles; GRM: no ammo or no missiles) or on terrain event 6 on map 0: mech_ai_service_unit = it, AI_CallPlan $B. After unit 49: AI_ResumePlan
+$00EEA8  .check_hq
+$00EF08  .check_needs
+$00EF3E  .check_missiles
+$00EF44  .next_unit
+$00EF50  .service
+$00EF64  .go_to_goal
+$00EF6A  AI_CallPlan           ; plan d0 at step 0, the current plan and step saved for AI_ResumePlan; pad and +$E3 cleared; mech_ai_needs_service -> mech_ai_refuel = $FF
+$00EF7E  .save
+$00EF94  AI_ResumePlan         ; plan +$A7 / step +$A6 back, pad cleared
+$00EFB8  .check_engage
+$00EFC4  .done
+$00EFC6  AI_SetPlan            ; plan d0 at step 0, pad cleared
+$00EFDA  .set
+$00EFF0  AI_Random             ; copy of Random
+$00F002  .step
+$00F022  AI_NearestOutpost     ; unmarked record (18: outposts, then HQs) nearest d1/d2 -> d0 record, d1 its mark; Z if none
+$00F036  .loop
+$00F04E  .dy
+$00F05A  .compare
+$00F066  .next
+$00F07A  AI_NearestOwnOutpost  ; own record nearest the mech (outposts and the own HQ: flags & 3 is the owner) -> a2; C set if none
+$00F094  .loop
+$00F0AA  .dy
+$00F0B6  .compare
+$00F0C0  .next
+$00F0D0  .done
+$00F0D4  AI_NearestOtherOwnOutpost ; same, skipping the one at mech_ai_goal_x/y
+$00F0EE  .loop
+$00F10E  .dy
+$00F116  .compare
+$00F120  .next
+$00F130  .done
+$00F134  AI_NextTowardEnemyHQ  ; own HQ if unmarked; else the unmarked record nearest d1/d2 that fuel from mech_ai_from reaches
+$00F14E  .check_home
+$00F164  .home
+$00F168  .search
+$00F182  .loop
+$00F19E  .dy
+$00F1AA  .check_fuel      ; own record: one-way fuel; others: round trip
+$00F1C2  .round_trip
+$00F1CC  .distance
+$00F1D8  .dy2
+$00F1E4  .compare
+$00F1F0  .next
+$00F1F8  .done
+$00F204  AI_GridCellOccupied   ; d1 = x:y; Z clear if v_grid has an occupant
+$00F228  AI_GetDirection       ; d0 = direction from d3/d4 to d1/d2 (GetDirection); falls into AI_ManhattanDist: d1 = |dx| + |dy|
+$00F22E  AI_ManhattanDist      ; d1 = |d1-d3| + |d2-d4|
+$00F234  .dy
+$00F23A  .sum
+$00F23E  AI_ScanBlocksInDir    ; from the mech's layout cell, up to 24 cells (32 px) in direction mech_ai_scan_dir (0 up, clockwise; AIScanDirTable) for a block whose tile at row 1, column 1 has b9 -> d1/d2 px; C set if none before the map edge
+$00F282  AIScanDirTable        ; 8 scanners, up first, clockwise
+$00F2A2  AI_Scan_Up            ; one layout cell (32 px, $80 bytes a row) a step; map edge or 24 cells: AI_Scan_None
+$00F2CA  AI_Scan_Down
+$00F2F6  AI_Scan_Right
+$00F31E  AI_Scan_Left
+$00F342  AI_Scan_UpRight
+$00F374  AI_Scan_DownRight
+$00F3AA  AI_Scan_DownLeft
+$00F3DC  AI_Scan_UpLeft
+$00F40A  AI_Scan_Found         ; d1/d2 = the cell x/y in px, C clear
+$00F418  AI_Scan_None          ; C set
+$00F41E  AIDropOffsetsPost     ; 8 x (dx, dy) words round an outpost, clockwise from up-left (mode 2, cursor mech_ai_post_drop)
+$00F43E  AIDropOffsetsHQ       ; the same round an HQ, wider (cursor mech_ai_hq_drop)
+
+; ===========================================================================
+; Menu module ($53000): title, options, results, ending. Own VDP/text/sound helpers.
+
+$053000  MenuModule_Title      ; title and options; d0 = -1 for the attract demo
+$053004  MenuModule_GameEnd    ; WINNER, results, ending
+$05300C  M_Init
+$053028  Menu_TitleFlow
+$05303E  Menu_GameEndFlow
+$053048  Title_Run             ; Technosoft logo, title, wait for Start; d0 = -1 on timeout
+$05309A  Title_LoadGfx         ; tank photo tiles, Technosoft logo tiles
+$0530C0  M_FillPlaneB          ; tile $26BE
+$0530EE  Title_Show
+$05310A  Title_DrawLogo
+$05315E  Title_LoadLogo        ; RLE $70000[2] -> $FF0000, palette from the entry's tail
+$053190  Title_SlideLogo
+$053206  Title_ShowTankPhoto
+$05325C  Title_FadeInPhoto
+$053296  Title_TechnosoftLogo
+$053324  Title_CycleLogoColours
+$05335A  Title_CyclePressStart
+$053394  Title_WaitStart       ; region picks the text tiles ($E4B0 or $E4D8)
+$05353C  GameEnd_Run
+$0535E6  Ending_ShowForest
+$053668  Ending_SetTextPalette
+$0536AC  Ending_Run
+$0537E4  Ending_ShowPicture    ; still life or grave, by game mode
+$053864  Ending_ScrollStory
+$0538D8  Ending_ScrollLine
+$05391C  Staff_Scroll
+$0539C0  Staff_BlankLines
+$0539DE  Staff_ScrollLine
+$053A16  EndingText1
+$053D86  EndingText2
+$0540F6  StaffText
+$05429E  Winner_Show
+$05441A  M_WaitFrames          ; d7 frames
+$054428  Winner_FadeIn
+$054470  Results_Show          ; TIME and the per-player counts
+$0546E2  Ending_UnpackForest   ; LZW $57800 -> $FF0000
+$0546FE  Results_RecordWin     ; human beat the computer: set the map/difficulty bit in v_win_record
+$054878  WinRecord_Scramble    ; XOR v_win_record with WinRecordKeys[v_win_key]
+$05489C  WinRecordKeys
+$0548BC  Options_Run
+$05497A  Options_DrawPanel
+$054D2C  Options_Player1
+$054D48  Options_Player1Menu   ; User / Computer
+$054F04  Options_Player2
+$054F20  Options_Player2Menu
+$0550AC  Options_Window
+$0550C8  Options_WindowMenu    ; Split / Wide
+$055274  Options_Password
+$055290  Options_PasswordMenu
+$05545E  Password_DrawCursor
+$05548C  Password_EraseCursor
+$0554BC  Password_Check        ; "PASSWORD ERROR"
+$055876  Options_SoundTest
+$055C8E  Options_MapSelect     ; ABGRUND VULKAN LOCH STRAND STADT EISFREI WALDUNG OASE
+$055E80  MapSelect_Preview
+$055EB2  MapSelect_DrawPreview
+$05606E  MapSelect_DrawNames
+$056126  MapSelect_Highlight
+$056156  Options_TypeSelect    ; TYPE A-D (difficulty)
+$05638E  TypeSelect_Highlight  ; old entry in the plain attr, then the new one highlighted
+$0563AA  TypeSelect_PrintEntry ; TYPE d0 at x 14, y 5 + 2 x d0
+$0563D6  TypeNames             ; 4 x 8 bytes, "TYPE@A" to "TYPE@D", NUL-padded
+$0563F6  TypeSelect_DrawList
+$056490  M_VDPSetReg           ; reg d1 = d0
+$0564A4  M_VDPSetAddr          ; VRAM write at d1; a1 = VDP_DATA
+$05651C  M_WaitVBlank
+$056536  M_WaitVBlankIfOn
+$05655C  M_WaitVBlankEndIfOn
+$056582  M_VDPInit
+$0565A4  M_VDPInitRegs
+$0565DC  M_DisplayOn
+$0565F6  M_DisplayOff
+$05679C  M_ResetScroll
+$0567EC  M_ApplyScroll         ; m_scroll_x_b / m_scroll_y_b -> plane B
+$056816  M_ClearSprites
+$05684E  M_ClearPlaneB
+$0568BA  M_ReadJoypads         ; both pads OR'd into the word at v_joypad1
+$056948  M_WaitFramePad        ; wait, read pads; d0 = new presses
+$05696A  M_WaitFramePad2
+$056A64  M_SetAttrInline       ; inline word: palette/priority -> m_text_attr
+$056A84  M_SetCursorInline     ; inline x, y
+$056AA4  M_SetTileBaseInline   ; inline word OR'd into m_text_attr
+$056AC8  M_PrintCountAtCursor
+$056AFE  M_PrintStrAtCursor
+$056B3C  M_PrintInlineAtCursor
+$056B5A  M_PrintInlineAt       ; inline x, y, text (window plane)
+$056BB4  M_PrintStrAtB         ; d0 x, d1 y, a0 text (plane B)
+$056C22  M_PrintBigInline      ; inline x, y, text in the 2x2 font
+$056C60  M_PrintBigCount
+$056C78  M_PutBigChar
+$056D12  M_PrintBig2Digits
+$056D48  M_PrintBig4Digits
+$056D86  M_NumDigit
+$056F24  M_UploadPaletteLines  ; d0 = mask of CRAM lines
+$056F6E  M_UploadPalette
+$056FAA  M_ClearPalette
+$056FE0  M_PaletteSetTarget
+$056FF6  M_FadeIn
+$057042  M_FadeOut
+$057086  M_PaletteStepToTarget
+$0570F0  M_PaletteApplyFade
+$0571AC  M_RLE_UnpackToRAM     ; a0 table, d0 entry, a1 destination
+$057202  M_RLE_PutNibble
+$057218  M_RLE_UnpackToVRAM    ; a0 table, d0 entry, a1 VRAM address
+$057274  M_RLE_PutNibbleVDP
+$05728C  M_Snd_StartSong
+$0572A8  M_Snd_PlayMusic
+$0572CA  M_Snd_FadeMusic
+$057328  M_Snd_PlaySfxNow
+$057342  M_Snd_FlushSfx
+$0573B2  M_Z80_WaitMailbox
+$0573D8  M_Z80_TakeBusTestMailbox
+
+; ===========================================================================
+; Unit AI module ($5DF20). Each AI update runs the unit's order handler
+; (UnitAI_RunOrder), then one of four phase routines by unit_phase & 3.
+; Order codes are OrderInfo's names; orders 0, 4, 6, 7, 8 can't be bought.
+
+$05DF20  UnitAI_Update         ; v_unit_ai_group g (0..$B): unless 5 or $B, UnitAI_UpdateGroup g (minus 1 past 5); then g + 1, wrapping to 0 past $B
+$05DF3E  .run_group
+$05DF46  .next_group
+$05DF50  .store
+$05DF58  UnitAI_UpdateGroup    ; group d0: units d0, d0 + 10 ... d0 + 40 of each team: tick + 1, phase + 1, fire delay - 1 (floor 0), the type's handler (UnitAIHandlers), Unit_SetSprite; carried, held or dying ones (flags & $2C) only release a SUPPLY's customer
+$05DF76  .team1_unit
+$05DF90  .team1_phase
+$05DFBE  .team1_next
+$05DFD2  .team2_unit
+$05DFEA  .team2_phase
+$05E018  .team2_next
+$05E024  .team1_held
+$05E02C  .team2_held
+$05E032  .release_customer     ; a SUPPLY (type 4) with a docked customer (+$38): the customer's b2 cleared, its speed back (+$39 into +$25, max speed from its UnitStats), +$38 cleared; jmp (a4) back into the loop
+$05E06C  .resume
+$05E06E  UnitAIHandlers        ; by unit type
+$05E0AE  UnitAI_AMR
+$05E0E6  UnitAI_TAX
+$05E11E  UnitAI_SAM
+$05E162  UnitAI_ST
+$05E19A  UnitAI_Supply
+$05E1AE  UnitAI_GRM
+$05E1E0  UnitAI_None
+$05E1E2  UnitAI_Infantry       ; sets unit_turret b7 (aim separately) for the handlers
+$05E230  UnitAI_InfantryDone   ; return address UnitAI_Infantry pushes: clear unit_turret b7 again
+$05E238  UnitAI_FWA
+$05E270  UnitAI_SAMAttackHQ    ; SAM on order $A (also types $A-$E): even phases aim at the enemy mech, odd fire missiles
+$05E284  UnitAI_AttackHQ       ; order $A (also type $F): enemy HQ -> unit_dest_*; even phases find a target, odd fire
+$05E298  UnitAI_RunOrder       ; order $A: path hint -> unit_path_hint; then the UnitAIOrderTable handler
+$05E2CE  UnitAI_TurnFromTarget ; out of ammo, target within 4 steps of ahead: turn away (? (dir - target) - 8, not target + 8)
+$05E2FE  UnitAI_OrderRoam      ; 0 AF-001 (not buyable): drive on, random turn when blocked, engage in passing
+$05E434  UnitAI_RoamResume     ; no target: aim ahead; forget saved heading and dodge
+$05E456  UnitAI_OrderStand     ; 1 BDF-1SD: stop and aim at the target (GRM always runs this)
+$05E4A6  UnitAI_OrderPatrol    ; 2 AF-001A: wander within $46 px of the start point
+$05E5A8  UnitAI_PatrolResume   ; copy of UnitAI_RoamResume
+$05E5C8  UnitAI_OrderOutpost   ; 3 AT-101: to the goal outpost; vehicles park 64-96 px out facing away
+$05E73C  UnitAI_OutpostResume  ; as UnitAI_RoamResume, keeps the dodge
+$05E774  UnitAI_OrderGuard     ; 4 DF-F01 (not buyable): hold the start point, chase enemies seen at 2 x sight, return
+$05E910  UnitAI_OrderGuardNear ; 5 DF-F02A: as Guard, only enemies within 128 px of the start point
+$05EACA  UnitAI_OrderAmbush    ; 6 DF-F03S (not buyable): wait; hunt an enemy seen at 2 x sight; stop when it's gone
+$05EC4C  UnitAI_OrderAdvance   ; 7 T-BG1 (not buyable): drive on in its starting heading
+$05ECAA  UnitAI_OrderHold      ; 8 BDF-1ST (not buyable): hold the start point; out of ammo: back off, then return
+$05EE9E  UnitAI_OrderCapture   ; 9 AT-101H (INFANTRY): straight into the goal outpost
+$05EF32  UnitAI_OrderAttackHQ  ; A BA-001C: path hints to the enemy HQ, stop in range, shoot; a miss -> 12 updates wandering
+$05F0F4  UnitAI_OrderNoneB
+$05F0F6  UnitAI_OrderNoneC
+$05F0F8  UnitAI_OrderNoneD
+$05F0FA  UnitAI_OrderNoneE
+$05F0FC  UnitAI_OrderSupply    ; F PW-SS10 (SUPPLY): to the customer, dock on contact, +100 fuel/+20 missiles/+20 ammo, turn away
+$05F3B6  UnitAIOrderTable      ; 16 order handlers
+$05F3F6  UnitAI_Random         ; copy of Random
+$05F428  UnitAI_FireAtHQ       ; order $A in range: bullet straight ahead; else UnitAI_FireAtTarget
+$05F470  UnitAI_FireAtTarget   ; bullet when the aim is within 1 step of the target
+$05F4D2  UnitAI_FireTwinAtTarget ; same, two bullets (GRM)
+$05F534  UnitAI_FireMissileAtMech ; missile at unit_far_dir when the delay has run out
+$05F556  UnitAI_CheckShotResult ; hit: misses 0, and a CPU side halves unit_hit_victim's HP (slot + 1: the next unit, a bug); miss: C set at 3
+$05F5DA  UnitAI_RescanTarget   ; GRM: shot result, then the nearest enemy in sight
+$05F646  UnitAI_FindTargetHQ   ; order $A: not while in range
+$05F64E  UnitAI_FindTarget     ; keep the target while in sight, else the nearest (units before the mech); 3 misses: another
+$05F7A0  UnitAI_AimAtMech      ; unit_far_dir = direction + 1 to the enemy mech within $100, else 0
+$05F7E4  UnitAI_ScanFar        ; nearest enemy within 2 x sight -> unit_far_dir, unit_far_ptr
+$05F846  UnitAI_FindCustomer   ; SUPPLY: next of 10 own units from unit_target below 1/4 fuel, missiles or ammo
+$05F8E6  UnitAI_FireBullet
+$05F91E  UnitAI_FireBulletOffset
+$05F97A  UnitAI_FireMissile
+$05F9A8  UnitTwinGunOffsets    ; by dir & 7: first bullet x, y; second bullet dx, dy
+$05F9E8  UnitAI_ObjFromId
+$05FA26  UnitAI_DirToTarget    ; direction to unit_target_ptr
+$05FA38  UnitAI_SetTarget      ; grid id d0 -> unit_target_ptr; d1 = direction + 1
+$05FA58  UnitAI_GoalOutpost    ; nearest outpost not ours, or ours being taken -> unit_dest_dir, unit_dest_dist
+$05FB14  UnitAI_DirToEnemyHQ   ; -> unit_dest_dir, unit_dest_dist
+$05FC02  UnitAI_CheckFuelAim   ; out of fuel: stop, keep aiming at the target, C set (skipped for order $A in range)
+$05FC40  UnitAI_CheckFuel      ; out of fuel: stop, C set
+
+; ===========================================================================
+; Data
+
+$010000  MechFrames            ; 64 x $200
+$018000  SpriteTiles           ; -> VRAM $4800
+$01D000  RadarBlank
+$01D800  HUDIcons              ; 16 x $80
+$01E000  HUDTiles              ; -> VRAM $A000
+$020000  FontTiles             ; -> VRAM $D620
+$020A00  GamePalettes          ; CRAM lines 1-3
+$020B00  Z80Driver             ; $1980 bytes -> Z80 RAM
+$04E000  DemoData              ; map x $800: unit snapshot, P1 pad runs, P2 pad runs
+$052000  StartUnits            ; map x $200: team x $100: 32 x 8-byte unit records
+$05C3E0  ForestPalette
+$05DC00  UnitStats             ; 32 bytes per type, 8-byte name first
+$05DDC0  UnitStats_KIDOU       ; the player mech
+$05DE00  UnitAvailByMap        ; word per map: bit per buyable unit type
+$05DE20  OrderInfo             ; 16 bytes per order: 10-char name, cost word
+$060000  RLE_WinnerFont
+$061000  EndingPalettes
+$061100  RLE_EndingPictures
+$068400  TankPhotoPalette
+$068420  RLE_TankPhotos
+$070000  RLE_MenuGfx           ; menu fonts, Technosoft logo, title logo, ending font, ENDE
+$073E00  MenuPalette
+$073F00  MapPalettes           ; 8 x $20
+$074000  RadarImages           ; 8 x $800
+$078000  SoundData               ; ? the address sent with command $0A
+
+; ===========================================================================
+; RAM
+
+$FF0000  v_map_blocks          ; RAM start. Game: 512 blocks x 16 nametable words (LZW $3F000); menus: screen buffer
+$FF4000  v_block_terrain       ; one word per block; low byte = terrain type
+$FF4400  v_anim_tiles          ; 32 x $20 animated-tile records (the map's, assets/maps/*/anim.txt): word 0 the tile that animates (0: off), words 0-15 the tiles it shows in turn up to a 0 word
+$FF4800  v_anim_tile_gfx       ; 32 x 32 bytes: each record's tile picture as loaded (Map_InitAnimTiles), put back when the record shows word 0 again
+$FF4C00  v_anim_tile_shown     ; word per record: the tile now in word 0's VRAM slot
+$FF4C40  v_anim_tile_step      ; byte per record: the word it shows next, 0-15; b7 = off (word 0 is tile 0)
+$FF5000  v_unpack_buf          ; map tiles on load, then the 64x64 map layout
+$FF8000  v_sprite_count
+$FF8002  v_sprite_mux_phase    ; 0..$B
+$FF8004  v_scroll_x_a          ; view A (plane A) horizontal scroll
+$FF8006  v_scroll_x_b
+$FF8008  v_scroll_y_a
+$FF800A  v_scroll_y_b
+$FF800C  v_scroll_x_a_prev
+$FF800E  v_scroll_x_b_prev
+$FF8010  v_scroll_y_a_prev
+$FF8012  v_scroll_y_b_prev
+$FF8014  v_sprite_fixed        ; 10 fixed sprite entries, uploaded by CPU
+$FF8044  v_sprite_mech1
+$FF804C  v_sprite_mech2
+$FF8064  v_sprite_list
+$FF89B4  v_outposts            ; 16 x 8: +0 $80|owner (0-1 none, 2 P1, 3 P2), +2/+3 P1/P2 hold, +4 x, +6 y
+$FF8A34  v_hq                  ; 2 x 8: +2 HP, +4 x, +6 y (P1 then P2)
+$FF8A3C  v_hq2                 ; P2's HQ record (v_hq + 8)
+$FF8A66  v_camera1             ; x, then y (v_camera1_y): map pixel at the view's top left
+$FF8A68  v_camera1_y
+$FF8A6A  v_camera2
+$FF8A6C  v_camera2_y
+$FF8A6E  v_unit_team_toggle    ; which team's units update this frame
+$FF8A70  v_unit_ai_group       ; 0..$B, + 1 a frame by UnitAI_Update (groups 5 and $B run no units); outposts service and terrain damage act only on group 0 (units: 0 and 1), anim tiles on 0 and 6
+$FF8A72  v_hit_flags           ; collision/terrain probe result
+$FF8A74  v_hit_id              ; grid id of what was hit
+$FF8A75  v_hit_id_lo           ; the probes write the id as this byte; readers take the word (the probe's clr.l of v_hit_flags zeroes the high byte)
+$FF8A76  v_terrain_event       ; the event tile's block terrain word: low nibble = the type (TerrainEventHandlers), b7 chained effects, high byte the handler's parameter
+$FF8A78  v_terrain_event2
+$FF8A7A  v_terrain_event3      ; bits 10-13: outpost index
+$FF8A80  v_scan_counts         ; 4 bytes: P1 mech, P1 units, P2 mech, P2 units
+$FF8A84  v_scan_list           ; grid ids by ring, 0 between rings, $FF at the end
+$FF8B94  v_mech1
+$FF8C94  v_mech2
+$FF8D94  v_units1              ; 50 x $50
+$FF9D34  v_units2
+$FFA000  v_lzw_left
+$FFA004  v_lzw_src
+$FFA008  v_lzw_dst
+$FFA00C  v_lzw_n_bits
+$FFA00E  v_lzw_clear_flg
+$FFA010  v_lzw_free_ent
+$FFA012  v_lzw_size
+$FFA014  v_lzw_maxcode
+$FFA016  v_lzw_offset
+$FFA018  v_lzw_maxmaxcode
+$FFA01C  v_lzw_rep
+$FFA01E  v_lzw_last
+$FFA020  v_lzw_buf
+$FFA030  v_lzw_stack
+$FFA430  v_lzw_suffix
+$FFB430  v_lzw_prefix
+$FFACD4  v_bullets1            ; 24 x $20
+$FFAFD4  v_missiles1           ; 8 x $20
+$FFB0D4  v_bullets2
+$FFB3D4  v_missiles2
+$FFB4D4  v_grid                ; 64 x 64 cells of 32 px: grid id of the occupant
+$FFC4D4  v_radar_buf1          ; $800 each
+$FFCCD4  v_radar_buf2
+$FFD4D4  v_mapfx               ; 32 x 12-byte map tile changes (MapFx_Update): +0 b7 active, b6 chained; +2 countdown, +3 its reload; +4/+6 x/y; +8 new block; +$A layout offset (bytes)
+$FFD654  v_scroll_queued       ; 4 byte flags, cleared as a long by Map_ScrollUpdate: row A (this byte), then v_col_queued_a, v_row_queued_b, v_col_queued_b
+$FFD655  v_col_queued_a
+$FFD656  v_row_queued_b
+$FFD657  v_col_queued_b
+$FFD658  v_row_queue_a
+$FFD6D8  v_col_queue_a
+$FFD758  v_row_queue_b
+$FFD7D8  v_col_queue_b
+$FFD858  v_anim_tile_queue     ; 32 x $A, an entry per record: +0 queued, +1 DMA (VRAM copy) else CPU write, +2 CPU: the picture's RAM address / DMA: the source register words $95ss $96ss, +6 CPU: the VRAM write command / DMA: the command's first word
+$FFD998  v_sprite_window       ; pointer to this frame's 70-entry window
+$FFD99C  v_gauge_queue         ; 16 x $26: cells - 1 (0 = free), the VDP command (long), up to 16 tile words; HUD_QueueBar fills an entry, HUD_FlushBars writes it and frees it
+$FFDBFC  v_unit_count          ; byte per team
+$FFDBFE  v_outpost_count       ; P1, P2, neutral, total
+$FFDBFF  v_outpost_count_p2    ; P2's (Game_SecondTick's income)
+$FFDC02  v_unit_type_count     ; 16 bytes per team
+$FFDC22  v_blink_timer         ; frame count mod $40
+$FFDC24  v_second_timer        ; 0..$3B
+$FFDC26  v_mech_tick
+$FFDC28  v_colour_cycle        ; 2 words: ColourCycles' steps (& $F), + 1 each by Map_AnimTilesUpload
+$FFDC30  v_fade_steps
+$FFDC32  v_map_palette         ; fade working copy of CRAM line 0
+$FFDC52  v_radar_sprites1      ; 18 x 8
+$FFDCE2  v_radar_sprites2
+$FFF7C0  v_rng_seed
+$FFF7C4  v_rng_seed_saved
+$FFF800  v_int_stubs           ; 8 x (jmp abs.l, nop) for the autovectors
+$FFF832  v_vblank_target       ; the L6 stub's jmp address
+$FFF840  v_hw_version
+$FFF842  v_warm_boot
+$FFF844  v_joypad1
+$FFF845  v_joypad2
+$FFF846  v_vdp_reg1
+$FFF848  v_split_screen
+$FFF84A  v_options             ; +0 mode (b0 P2 CPU, b1 P1 CPU, b2 wide screen), +1 difficulty, +3 map
+$FFF84B  v_difficulty
+$FFF84C  v_option2             ; ? copied to mech +$64
+$FFF84D  v_option_map
+$FFF84E  v_win_record          ; bit per map, byte per difficulty, scrambled
+$FFF85A  v_win_key
+$FFF8F2  v_dma_trigger         ; RAM routine: move.w #v_dma_word,(a6) / rts
+$FFF8F4  v_dma_word
+$FFF8F8  v_view_camera_a       ; camera pointer for view A
+$FFF8FC  v_view_camera_b
+$FFF900  v_view_cfg            ; per player: view slot (neg = hidden), view index
+$FFF904  v_player_flags        ; per player: b7 active, b4 team 2, b0 CPU
+$FFF906  v_mech_option2
+$FFF908  v_split_done          ; HBlank has relinked this frame (main loop blocks it with 1)
+$FFF909  v_hud_sprite_cut      ; VDP_Init sets it with v_split_done (word $101), MainLoop_Title/Game_Over clear it ($100): VDP_UploadSprites cuts sprite 5's link for HBlank to restore; DebugPrintHex waits for the relink
+$FFF90A  v_sfx_priority
+$FFF90C  v_sfx_queued
+$FFF910  v_game_over           ; word, $FFFF from Game_Over (0 from MainLoop_Title/Game_Start): Sprites_DrawAlerts draws nothing
+$FFF912  v_winner              ; 0 = P1, 1 = P2
+$FFF914  v_units_built         ; word per team
+$FFF91C  v_mech_spawns         ; word per player
+$FFF920  v_frame_counter       ; long, saturates
+$FFF922  v_frame_counter_lo    ; its low word: the demo's 60 s timeout (Game_SecondTick, Game_CheckPause)
+$FFF924  v_game_type           ; negative = attract demo
+$FFF926  v_map
+$FFF928  v_demo_index
+$FFF92A  v_free_ammo           ; firing costs no ammo: record modes 1/3, or the pause cheat (Game_CheckPause)
+$FFF92C  v_dev_heal_mechs      ; cleared, never set: nonzero makes Game_FrameLoop refill both mechs' HP from KIDOU and clear their destroyed bit every frame (development leftover)
+$FFF92E  v_cpu_boost           ; difficulty A/B, human ahead: CPU shots x1.5 ($8000 = P1 side CPU, $8010 = P2)
+$FFF930  v_cpu_boost_hq_hp     ; random $199-$398: CPU HQ HP below this counts as "human ahead"
+$FFF932  v_record_mode         ; development demo recorder: 1 snapshot, 2 record, 3 save
+$FFF934  v_demo_ofs1
+$FFF936  v_demo_ofs2
+$FFF938  v_demo_run1
+$FFF939  v_demo_run2
+$FFF93A  v_sprite5_link
+$FFF93C  v_sprite5_link_next
+$FFF93E  v_split_enable
+$FFF940  v_load_anim
+$FFF946  v_load_sprites
+$FFF956  v_load_mech_frame
+$FFF942  v_load_busy
+$FFF944  v_load_abort
+$FFF958  v_textbuf             ; plane, x, y, text
+$FF9800  m_pad_pressed         ; menu module
+$FF9802  m_pad_held
+$FF9824  m_cursor_x
+$FF9826  m_cursor_y
+$FF9828  m_text_attr
+$FF982C  m_scroll_x_b
+$FF982E  m_scroll_y_b
+$FF9830  m_numbuf
+$FF9885  m_vdp_reg1
+$FF9886  m_palette             ; 4 lines
+$FF9906  m_palette_target
+$FF9986  m_fade_level
+$FF998A  m_cycle_pos
+$FF998C  m_cycle_timer
+$FF9990  m_sprites
+
+; ===========================================================================
+; Structure fields (equates only, not yet substituted into operands)
+
++$00  obj_flags                ; b7 active, b6 (mech) order menu open, (unit) on screen in some view, b5 dying/destroyed, b4 team 2, b3 carried/carrying, b2 (unit) held by a SUPPLY, b1 (unit) reversing: velocity against the heading, b0 (mech) CPU, (unit) ST-57U: needs b9 tiles
++$01  obj_type
++$03  obj_dir                  ; 0-$F
++$0A  obj_hp
++$0C  obj_size
++$10  obj_x
++$12  obj_y
++$02  obj_order
++$08  obj_power                ; damage dealt by its shots
++$18  obj_missiles
++$19  obj_ammo
++$1A  obj_fuel
++$1E  obj_sprite_attr
++$20  obj_sprite_size
++$28  mech_pad                 ; pad bits this frame
++$29  mech_pad_prev
++$01  mech_carried_slot        ; unit slot of the carried unit (Outpost_PickUpProduct)
++$02  mech_carried_order       ; its order
++$2C  mech_form                ; 0 robot, 1 jet, 2 jet carrying a unit
++$1C  mech_terrain             ; v_terrain_event under it after each move ($3960)
++$2E  obj_grid_cell
++$30  obj_vel_x
++$32  obj_vel_y
++$34  obj_target_vel_x
++$36  obj_target_vel_y
++$38  mech_screen_x            ; x within its view (the camera keeps it until a map edge stops the camera)
++$3A  mech_screen_y            ; y on screen, HUD strip ($20) included
++$3C  mech_cam_dx              ; camera move this frame (cleared by Mech_Update, set by the move code; Mech_UpdateCamera clamps what it applies but leaves this as it was)
++$3E  mech_cam_dy
++$40  mech_menu_step
++$41  mech_radar_step
++$42  mech_view                ; view slot, negative = not shown
++$43  mech_view_index          ; low byte of v_view_cfg (0 P1, 1 P2 as the menus set it up): a wide view follows camera 2 when set (Map_DrawViewWide, Map_Queue*Full); the order menu shows P2's unit count
++$44  mech_menu_scroll_x       ; its view's scroll, saved while the order menu is open (the camera moves this copy)
++$46  mech_menu_scroll_y
++$48  mech_menu_row
++$4A  mech_menu_type
++$4C  mech_menu_order
++$4F  mech_prod_state          ; 1 building, 2 ready, $FF short of money
++$50  mech_reorder_state       ; re-ordering the carried unit in the menu: 2 done, $FF short of money
++$52  mech_radar_mode          ; 0 units near the mech, 1 map image
++$54  mech_money
++$5C  mech_order_cost
++$5E  mech_prod_type
++$5F  mech_prod_order
++$60  mech_prod_timer
++$62  mech_hp_shown            ; the HP bar's value as last queued (HUD_UpdateGauges): HP / 8, 0 destroyed. Only HUD_UpdateGauges writes the four; 0 at the start, so the first frame queues every bar that isn't 0
++$63  mech_hq_hp_shown         ; its HQ's: HP / 32
++$66  mech_ammo_shown          ; ammo / 4
++$67  mech_fuel_shown          ; fuel / 64
++$68  mech_carried_refill      ; what Outpost_Service just topped up on the carried unit (Obj_RepairRefuel's d3: b0 HP, b1 fuel, b2 ammo, b3 missiles); the order menu redraws the carried unit's gauges while it isn't 0 and clears it (OrderMenu_DrawCarriedGauges)
++$69  mech_fire_delay
++$6C  mech_hq_alert            ; HQ-hit warning frames: $B4 when its HQ loses HP ($8D7A); Sprites_DrawAlerts counts it down while it shows
++$6D  mech_menu_closing
++$07  mech_transform_delay     ; frames to the next transform frame (6 each)
++$0E  mech_bumped              ; what the last move ran into (as unit_bumped): unit slot (+ $32 team 2), $64/$65 a mech
++$14  mech_sub_x               ; word: obj_vel_x accumulates here; its high byte (whole pixels) goes into obj_x each move
++$16  mech_sub_y
++$24  mech_speed               ; word; Mech_Update writes its low byte (+$25)
++$27  mech_max_speed           ; KIDOU +$20 robot, +$21 jet, +$22 carrying
++$2A  mech_lead                ; screen lead: 0 free within a box, 1 sliding to MechLeadSplit/Wide, 2 the camera follows
++$2B  mech_terrain_flow        ; set by a terrain handler for the next move: b7 clear a current (bits 4-6 direction, 0-3 strength), b7+b6 a slowdown, b7 alone an acceleration; cleared each move
++$2E  mech_pad_last            ; last frame's pad for mech_dir_held (obj_grid_cell's offset)
++$2F  mech_dir_held            ; frames the pad's direction has stayed the same (to $80)
++$6E  mech_fuel_count          ; distance: every $50 of speed, fuel - mech_fuel_use and the walk step on
++$6F  mech_walk_step           ; robot walk frames 0-2
++$0D  mech_altitude            ; jet: shadow x offset, +2 a frame to $10 (Sprites_DrawMechJet); robot 0; $10 on a respawn
++$0F  mech_fuel_use            ; subtracted from obj_fuel at $3A40 (Mech_Update); KIDOU +$24, +1 for a human against a CPU
++$1E  mech_frame               ; low byte: KIDOU frame ($10000 + frame x $200), set by Mech_Update ($3A62); $1800: flips (jet)
++$20  mech_frame_loaded        ; frame last DMA'd by VDP_UploadSprites; $FFFF (Mech_Respawn): none
++$53  mech_radar_mode_shown    ; radar mode the order menu last drew
++$70  mech_home_cam_x          ; camera at the start (Mechs_Init): the fly-home target ($3352)
++$72  mech_home_cam_y
++$74  mech_home_screen_x       ; mech_screen_x/y at the start; with +$70: the landing spot (Mech_ClearHomePad)
++$76  mech_home_screen_y
++$78  mech_radar_own_y         ; order-menu radar marker of this mech, sprite coordinates (Radar_*)
++$7A  mech_radar_own_x
++$7C  mech_radar_foe_y         ; the rival's marker; y 0 = off the radar
++$7E  mech_radar_foe_x
++$04  mech_turn_to             ; heading the pad asks for (table $4710); AI_TurnToward sets it with obj_dir
++$06  mech_transform           ; transform animation: frames left in b0-b6, b7 landing ($13 taking off, $8D landing); 0 when not transforming
++$09  mech_hit_victim          ; as unit_hit_victim: slot + 1 (+ $32 team 2), $64 P1 mech, $65 P2 mech, $66 HQ
++$22  mech_shot_flags          ; as unit_shot_flags: b6 own shot hit, b5 own shot in flight
++$23  mech_blocked             ; robot form: v_hit_flags of the last move (as unit_blocked)
++$2D  mech_form_lo             ; low byte of mech_form: tst.b = not a robot
++$6A  mech_missile_dirs        ; bit n: an enemy missile is homing in from direction n (Shots_UpdateTeam, every frame)
+
++$04  unit_turn_to             ; heading Unit_SetSprite turns towards, a step per AI update
++$05  unit_tick                ; +1 per AI update; & 3 = 0 on death leaves a survivor
++$06  unit_phase               ; +1 per AI update; & 3 picks the phase routine
++$07  unit_fire_delay          ; AI updates to the next bullet (stat_fire_delay)
++$09  unit_hit_victim          ; set by a landed shot: slot + 1 (+ 50 team 2), $64/$65 mech, $66 HQ
++$0F  unit_fuel_use            ; stat_fuel_use: taken from obj_fuel each move while unit_speed isn't 0 (Units_UpdateTeam, $1364)
++$0E  unit_bumped              ; what the last move ran into: slot (+ 50 team 2), $64/$65 mech
++$1C  unit_terrain             ; v_terrain_event under it
++$22  unit_shot_flags          ; b7 hit by a shot (low nibble: its direction), b6 own shot hit, b5 own shot in flight
++$23  unit_blocked             ; v_hit_flags of the last move: b0 object, b1 tiles, b2 terrain event
++$24  unit_speed               ; word; Unit_SetSprite scales the heading by it
++$26  unit_prev_speed
++$27  unit_max_speed           ; stat_speed; 0 while out of fuel
++$28  unit_turret              ; stat_overlay: b7 aims separately (unit_aim_dir), low bits overlay type
++$29  unit_turret_dir          ; turret units; SAM and GRM: missile delay
++$2A  unit_aim_dir             ; turret / INFANTRY facing wanted
++$2C  unit_overlay_attr        ; second sprite's attr
++$38  unit_home                ; long x|$80000000, y: start point (orders 2, 4, 5, 8); other orders use it their own way
++$3A  unit_detour              ; SUPPLY: high byte updates left, low byte turn step
++$3C  unit_misses
++$3D  unit_dodge               ; turn step or state, order-specific
++$3E  unit_target_dir          ; direction + 1 to unit_target, 0 none
++$3F  unit_path_hint           ; order $A: Map_GetPathHint direction + 1, 0 none
++$40  unit_dest_dist
++$42  unit_dest_dir            ; direction + 1 to the goal outpost or enemy HQ
++$43  unit_far_dir             ; direction + 1 to a far enemy or the enemy mech
++$44  unit_hold                ; $FF stopped to aim; order-specific
++$45  unit_saved_dir           ; heading + 1 before an engagement
++$46  unit_target              ; grid id, 0 none; SUPPLY: scan cursor
++$47  unit_shot_out            ; $FF from firing until UnitAI_CheckShotResult
++$48  unit_target_ptr          ; SUPPLY: the customer
++$4C  unit_far_ptr             ; UnitAI_ScanFar's object
++$08  stat_price               ; UnitStats record
++$0A  stat_hp                  ; word
++$0C  stat_size
++$0D  stat_ammo
++$0E  stat_fuel                ; word
++$10  stat_sprite_size
++$11  stat_speed
++$12  stat_overlay             ; b7: turret overlay of type & $7F
++$13  stat_fuel_use            ; unit_fuel_use
++$14  stat_shot_speed
++$15  stat_shot_life
++$16  stat_fire_delay
++$17  stat_power               ; obj_power
++$18  stat_sight               ; rings of 32 px grid cells
++$19  stat_build_time          ; x 128 frames
++$1A  stat_missiles
++$1B  stat_missile_speed
++$1C  stat_missile_life
++$1D  stat_missile_delay
++$1E  stat_orders              ; bit per order it can be given
++$80  mech_ai_frames           ; +1 per AI_MechThink while alive
++$82  mech_ai_st_map           ; $FF on maps 3, 5, 7, the ST-57U maps (set by map number): HQ count radius 10, ST raids and HQ attacks
++$84  mech_ai_reorder          ; buy mode substep 2: $FF when it re-orders a carried unit (then substep 7), 0 for a new buy (then substep 3, which copies it into mech_ai_lifted, so that copy is always 0). Plan 1 re-orders by mech_form = 2, not by this
++$85  mech_ai_order_tries      ; plan 1: presses left on the order row before giving up (16)
++$83  mech_ai_misses_left      ; plan 5: misses left before it repositions (3; reset by anything but a miss). plan $B: the step AI_Service_WatchEnemy goes on to (1, 6, 9)
++$85  mech_ai_attack_here      ; plan 5: non-zero = look for enemies round itself (plan 8 sets $FF), 0 round mech_ai_dest. Same byte as mech_ai_order_tries
++$86  mech_ai_goal_x           ; plans 4/9/$C fly to (goal_x, goal_y); often written as one long
++$88  mech_ai_goal_y
++$8A  mech_ai_heading          ; $FF none. Plan $10: +1/-1, the side it curves in on. Setup: 16-way own HQ -> enemy HQ; buy mode: drop-point facing (AIDropDirs, plan 4) or launch heading (8-way, plan $D). Plan $B: drop tries left (16)
++$8B  mech_ai_unused_flag      ; written $FF by setup, AI_Respawned and plan $B's lift; nothing reads it
++$8F  mech_ai_target           ; plan 5: grid id of the enemy it goes for (as v_scan_list: bit 6 unit, slot + 1 in the low bits; bit 7 team 2)
++$8C  mech_ai_hold             ; move state 6: frames left to keep the pad (the plan is skipped)
++$8D  mech_ai_buy_count        ; units still to buy (AI_BuyAt* d0); buy mode substep 9 counts it down
++$8E  mech_ai_move             ; AIMoveStateTable state, run every frame
++$90  mech_ai_marks            ; 18 bytes, one per record: b0 claimed by the route, b1-b4 per-destination buy flags (see AI_StratOwnPost/OwnHQ), b5 abandoned (set on a death), b6 launch/staging point, b7 visited as ours
++$A2  mech_ai_dropped          ; $FF: plan 3's tap left an empty jet (unit put down); buy mode substep 9 reads it. Plan 5: $FF once it has been in the landing box (from then on it lands where it can). ? plans 8/$A too (not read)
++$A3  mech_ai_lifted           ; $FF: carrying after plan 2's tap or plan 8's pickup; buy mode substeps 5 (-> 7) and 6 (-> 2) read it; substeps 3 and 4 clear it
++$A4  mech_ai_edge_steer       ; pad before AI_KeepOffEdges turned it; non-zero widens the edge margins
++$A5  mech_ai_buy_kind         ; AI_BuyAt* d1: AIBuyScriptTable column 0-7
++$A6  mech_ai_saved_step       ; AI_ResumePlan
++$A7  mech_ai_saved_plan
++$A8  mech_ai_dest             ; word: outpost/HQ record it is heading for
++$AA  mech_ai_from             ; word: record it plans from
++$AC  mech_ai_next_dest        ; word: step 13's counter-attack record; becomes mech_ai_dest when the HQ defence ends
++$AE  mech_ai_next_from
++$B0  mech_ai_buy_script       ; long: the AIBuyScripts entry plan 1 works through
++$B4  mech_ai_saved_goal       ; long: mech_ai_goal_x/y saved by move state 0 for a service trip; states 5 and 8 put it back
++$B8  mech_ai_countdown        ; strategy passes: HQ defence ($78, AI_HQDefenceTick); neutral-outpost buy pacing ($F0, then $78)
++$B9  mech_ai_alert_post       ; record index of an alert-1 outpost (from mech_ai_watch_post)
++$BA  mech_ai_refuel           ; non-zero: move state 0 starts a service trip. 1: the trip needs a refuel first (AI_Fuel*); buy mode sets 2; $FF plan $11 path, AI_CallPlan
++$BB  mech_ai_route            ; route mode: $FF choosing, 0 destination chosen, $80 none left
++$BC  mech_ai_scan_dir         ; AI_ScanBlocksInDir direction (plan $10), then a frame count; also steps 17/20: records skipped on the way back out; plan 5: laps to fly on inside the box before landing (24 after a reposition)
++$BD  mech_ai_aim_dir          ; plan 5: 16-way direction to the target; it shoots when obj_dir matches. Plans $D, $10: failed drops
++$BE  mech_ai_fight_form       ; move state 6: mech_form + 1 when the fight started, 0 none; leaving, it transforms back first
++$BF  mech_ai_pad_dir8         ; 8-way index (AIPadDirs) of the pad direction plans 5, 6, 7, $A last set
++$C0  mech_ai_pad_delay        ; word, plan 1: frames between menu presses (6; 0 when the view isn't shown). Scratch: other plans use +$C0/+$C2 their own way
++$C2  mech_ai_pad_wait         ; word, plan 1: frames to the next menu press
++$C0  mech_ai_service_unit     ; word, plan $B: the unit it services (set by plan $11; step 4 renews it from mech_carried_slot)
++$C0  mech_ai_box_left         ; words: plan 5's landing box round the target; plans 6, 7: outer box of the drop ring; plan $A: drop box round the target. Same words as mech_ai_pad_delay/pad_wait
++$C2  mech_ai_box_top
++$C4  mech_ai_box_right
++$C6  mech_ai_box_bottom
++$C8  mech_ai_inner_left       ; words: plans 6, 7: inner box round the goal; no drop inside it
++$C8  mech_ai_service_post     ; word, plan $B: the outpost record for the refill (then mech_ai_return_x)
++$C8  mech_ai_return_x         ; plan $B: where it puts the unit back (words)
++$CA  mech_ai_return_y
++$CA  mech_ai_inner_top
++$CC  mech_ai_inner_right
++$CE  mech_ai_inner_bottom
++$D0  mech_ai_launches         ; kind-7 units bought for the current launch (up to 10); cleared by route mode
++$D1  mech_ai_attack_buy       ; 1: bought by an AI_BuyAt*_Attack entry: afterwards mode 4 unless the carried unit has order $A; plan $11 reuses it as a unit-slot cursor
++$D4  mech_ai_own_near         ; AI_CountAroundDest
++$D5  mech_ai_enemy_near
++$D6  mech_ai_respawn          ; byte; set (word $100) while destroyed, so AI_MechThink runs AI_Respawned
++$D7  mech_ai_detour           ; plans 4, 6: frames left of a detour round the enemy mech (set to 16)
++$D8  mech_ai_hq_hp            ; own HQ HP when last taken
++$DA  mech_ai_alert_taken      ; 0 none; step + 1 when alert 1 starts step 14 (never restored); $FF HQ defence running
++$DB  mech_ai_alert            ; from the move states: 1 enemy at one of its launch outposts (mech_ai_alert_post), $80 own HQ short of guards, $81/$EE own HQ lost HP (states 9/6)
++$DC  mech_ai_hq_attack        ; $FF once AI_StratEnemyHQ ran; cleared by step 14 and AI_Respawned; plans 1, $B read it; plan 8 turns $FF into $80 (enemy mech near the pickup post)
++$DD  mech_ai_hq_run           ; $FF heading for the enemy HQ; $80 the dest is a launch or staging point; 0 neither
++$DE  mech_ai_engage           ; move state 1: $80 may fight the enemy mech; $FF it came in range while a plan ran (AI_ResumePlan makes that $80); 0 no
++$E0  mech_ai_engage_range     ; word: distance at which move states 1, 6, 7, 8 take on the enemy mech; set by AI_Setup_PickStyle
++$E2  mech_ai_needs_service    ; $FF from move state 0: fuel < 1/4, HP < 1/4 or ammo < 1/8; AI_CallPlan turns it into mech_ai_refuel
++$E3  mech_ai_course           ; plans 4, 6: pad direction bits towards the goal
++$E4  mech_ai_hq_drop          ; drop-point cursor round an HQ (AIDropOffsetsHQ, +1 per try)
++$E5  mech_ai_hq_drop_end
++$E6  mech_ai_post_drop        ; round an outpost (AIDropOffsetsPost, +2 per try)
++$E7  mech_ai_post_drop_end
++$E8  mech_ai_bought           ; units bought for the current destination (buy mode substep 3)
++$E9  mech_ai_reset_count      ; AI_EnterResetMode calls; cleared with mech_ai_bought (word) and at an enemy outpost with no enemies
++$EA  mech_ai_deaths           ; +1 per death; at 3 back to 0 and the dest is abandoned
++$EB  mech_ai_launch_deaths    ; +1 per death; step 20 resumes launching only under 3, and clears it otherwise
++$EC  mech_ai_ground_shot      ; plan 5: $FF after a shot, until its result is read (as mech_ai_shot_wait in move state 6)
++$ED  mech_ai_watch_post       ; move state 13's outpost cursor, 0-15
++$EF  mech_ai_dodge            ; move state 14: frames left of a missile dodge
++$F0  mech_ai_strategy         ; AIStrategyTable step (mode 1)
++$F1  mech_ai_mode             ; plan 0: AIPlanModeTable index
++$F2  mech_ai_substep          ; modes 0, 2, 3
++$F3  mech_ai_plan             ; AIPlanTable index
++$F4  mech_ai_step             ; step within the plan
++$F5  mech_ai_style            ; 0-3 (AI_Setup_PickStyle): guards kept at own outposts; b0 = nearest-first routing
++$F6  mech_ai_dest_class       ; last step 7-11 taken; a change clears mech_ai_bought
++$F7  mech_ai_enemy_heading    ; 8-way own HQ -> enemy HQ; written by setup, never read
++$F8  mech_ai_pickup_post      ; word: own outpost nearest the dest, where a bought unit is collected (buy mode)
++$FA  mech_ai_buy_variant      ; AIBuyScriptTable row (& 3): +1 per new purchase; steps force 1, 2, 3; launches use & 1
++$FB  mech_ai_shot_wait        ; move state 6, robot: $FF after an aimed shot, until its result is read
++$FC  mech_ai_deliver_dir      ; buy mode substep 7, own HQ/outpost: AIPadDirs index put in the pad (+1 each time), but AI_SetPlan clears the pad straight after
++$FD  mech_ai_raid_map         ; $FF on maps 2, 4-7: step 12's INFANTRY raids (maps 3, 5, 7 raid with ST)
++$FE  mech_ai_launch_at_from   ; $FF: from is an own launch outpost (step 20); AI_StratOwnPost launches from it
++$FF  mech_ai_launch_at_dest   ; $FF: the dest is a launch outpost; step 6 launches (route mode, step 20)

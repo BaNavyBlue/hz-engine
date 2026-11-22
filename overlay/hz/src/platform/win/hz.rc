@@ -1,0 +1,46 @@
+/* The Windows build's resources (make hz, and the release's exe,
+ * build/dist/HerzogZwei.exe): the game's icon, the engine's own drawing (a
+ * delta wing over two bars; overlay/hz/ in the engine, laid over the port
+ * by tools/sync_private.py). Explorer shows the first icon; SDL's window
+ * takes icon 1 by its hint (platform_sdl3.c).
+ *
+ * The release's exe also says what it is: its name, maker and version,
+ * which Explorer's Properties, Details shows (HZ_DIST; the version from
+ * build/dist/hz_version.h, which the Makefile writes from the commit). It
+ * signs nothing: Windows still warns, as the README says. */
+1 ICON "hz.ico"
+
+#ifdef HZ_DIST
+#include <winver.h>
+#include "hz_version.h"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    HZ_VERSION_NUM
+PRODUCTVERSION HZ_VERSION_NUM
+FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+FILEFLAGS      0
+FILEOS         VOS_NT_WINDOWS32
+FILETYPE       VFT_APP
+FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "BaNavyBlue"
+            VALUE "FileDescription",  "Herzog Zwei"
+            VALUE "FileVersion",      HZ_VERSION_STR
+            VALUE "InternalName",     "HerzogZwei"
+            VALUE "LegalCopyright",   "Herzog Zwei (C) 1989 Technosoft. The engine: MIT, (C) 2026 BaNavyBlue"
+            VALUE "OriginalFilename", "HerzogZwei.exe"
+            VALUE "ProductName",      "Herzog Zwei, a ROM-free engine"
+            VALUE "ProductVersion",   HZ_VERSION_STR
+            VALUE "Comments",         "An unofficial port of the Mega Drive game, in C. It holds none of the game: it makes its files from the player's own cartridge image. Its source is the folder it came in."
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+#endif

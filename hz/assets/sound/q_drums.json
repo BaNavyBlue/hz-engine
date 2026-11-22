@@ -1,0 +1,771 @@
+{
+  "voice_level_db": 2.0,
+  "models": [
+    {
+      "name": "kick",
+      "ps2": "kick",
+      "level_db": 0,
+      "tl_ref": 20
+    },
+    {
+      "name": "long kick",
+      "tone_from_hz": 160,
+      "tone_to_hz": 52,
+      "glide_s": 0.035,
+      "fall_hz_s": 0.0,
+      "tone_level": 0.56,
+      "tone_decay_s": 1.5,
+      "noise_level": 0.0,
+      "noise_decay_s": 0.01,
+      "noise_hz": 3000,
+      "noise_q": 0.7,
+      "click_level": 1.2,
+      "click_ms": 8,
+      "click_hz": 1000,
+      "clip": true,
+      "cut": true,
+      "level_db": -7.0,
+      "tl_ref": 20,
+      "follow": 0.5,
+      "follow_floor_hz": 30
+    },
+    {
+      "name": "low tom",
+      "ps2": "low tom",
+      "level_db": 2,
+      "tl_ref": 20,
+      "decay_scale": 1.47,
+      "overtones_db": -12,
+      "attack_db": -10,
+      "glide_depth": 0.4,
+      "fall_scale": 0.5
+    },
+    {
+      "name": "mid tom",
+      "ps2": "mid tom",
+      "level_db": 2,
+      "tl_ref": 20,
+      "decay_scale": 1.47,
+      "overtones_db": -12,
+      "attack_db": -10,
+      "glide_depth": 0.4,
+      "fall_scale": 0.5
+    },
+    {
+      "name": "high tom",
+      "ps2": "high tom",
+      "level_db": 2,
+      "tl_ref": 20,
+      "decay_scale": 1.47,
+      "overtones_db": -12,
+      "attack_db": -10,
+      "glide_depth": 0.4,
+      "fall_scale": 0.5
+    },
+    {
+      "name": "snare",
+      "ps2": "snare",
+      "level_db": 1,
+      "tl_ref": 20
+    },
+    {
+      "name": "booming snare",
+      "ps2": "snare",
+      "level_db": 1,
+      "tl_ref": 20,
+      "with": "snare boom"
+    },
+    {
+      "name": "closed hat",
+      "ps2": "closed hat",
+      "level_db": 2,
+      "tl_ref": 20
+    },
+    {
+      "name": "open hat",
+      "ps2": "open hat",
+      "level_db": 2,
+      "tl_ref": 20
+    },
+    {
+      "name": "tuned snare",
+      "tone_from_hz": 300,
+      "tone_to_hz": 300,
+      "glide_s": 0.001,
+      "fall_hz_s": 750,
+      "tone_level": 1.0,
+      "tone_decay_s": 1.0,
+      "noise_level": 1.7,
+      "noise_decay_s": 0.06,
+      "noise_hz": 4000,
+      "noise_q": 0.5,
+      "click_level": 0.8,
+      "click_ms": 8,
+      "click_hz": 3000,
+      "wire_level": 0.2,
+      "wire_decay_s": 1.0,
+      "wire_hz": 1200,
+      "choke": true,
+      "level_db": 0,
+      "tl_ref": 20
+    },
+    {
+      "name": "low tuned snare",
+      "tone_from_hz": 300,
+      "tone_to_hz": 300,
+      "glide_s": 0.001,
+      "fall_hz_s": 450,
+      "tone_level": 1.0,
+      "tone_decay_s": 1.0,
+      "noise_level": 1.7,
+      "noise_decay_s": 0.06,
+      "noise_hz": 4000,
+      "noise_q": 0.5,
+      "click_level": 0.8,
+      "click_ms": 8,
+      "click_hz": 3000,
+      "wire_level": 0.2,
+      "wire_decay_s": 1.0,
+      "wire_hz": 1200,
+      "choke": true,
+      "level_db": 0,
+      "tl_ref": 20,
+      "with": "kick",
+      "with_db": -1.3
+    },
+    {
+      "name": "soft-wire tuned snare",
+      "tone_from_hz": 300,
+      "tone_to_hz": 300,
+      "glide_s": 0.001,
+      "fall_hz_s": 750,
+      "tone_level": 1.0,
+      "tone_decay_s": 1.0,
+      "noise_level": 1.7,
+      "noise_decay_s": 0.06,
+      "noise_hz": 4000,
+      "noise_q": 0.5,
+      "click_level": 0.8,
+      "click_ms": 8,
+      "click_hz": 3000,
+      "wire_level": 0.12,
+      "wire_decay_s": 1.0,
+      "wire_hz": 1200,
+      "choke": true,
+      "level_db": 0,
+      "tl_ref": 20
+    },
+    {
+      "name": "snare boom",
+      "tone_from_hz": 147,
+      "tone_to_hz": 147,
+      "glide_s": 0,
+      "fall_hz_s": 0,
+      "tone_level": 1.0,
+      "tone_decay_s": 0.5,
+      "noise_level": 0.0,
+      "noise_decay_s": 0.01,
+      "noise_hz": 3000,
+      "noise_q": 0.7,
+      "click_level": 0.0,
+      "click_ms": 0,
+      "click_hz": 1000,
+      "follow": 0.5,
+      "follow_floor_hz": 40,
+      "cut": true,
+      "level_db": -5.7,
+      "tl_ref": 20
+    }
+  ],
+  "drums": [
+    {
+      "song": 3,
+      "instrument": "kick_toms",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 2.4
+    },
+    {
+      "song": 3,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 373.5,
+      "pitch": 0.474,
+      "level_db": 1.0
+    },
+    {
+      "song": 3,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 444.5,
+      "pitch": 0.474,
+      "level_db": 1.0
+    },
+    {
+      "song": 3,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.474,
+      "level_db": 1.0
+    },
+    {
+      "song": 4,
+      "instrument": "kick_toms",
+      "max_hz": 134.9,
+      "model": "long kick",
+      "level_db": 1.4
+    },
+    {
+      "song": 4,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 166.4,
+      "pitch": 0.437,
+      "level_db": 6.0
+    },
+    {
+      "song": 4,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.437,
+      "level_db": 6.0
+    },
+    {
+      "song": 5,
+      "instrument": "kick_toms",
+      "max_hz": 134.9,
+      "model": "long kick",
+      "level_db": 0.8
+    },
+    {
+      "song": 5,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 264.3,
+      "pitch": 0.418,
+      "level_db": 4.0
+    },
+    {
+      "song": 5,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 395.7,
+      "pitch": 0.418,
+      "level_db": 4.0
+    },
+    {
+      "song": 5,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.418,
+      "level_db": 4.0
+    },
+    {
+      "song": 6,
+      "instrument": "kick_toms",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 1.2
+    },
+    {
+      "song": 6,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 352.6,
+      "pitch": 0.468,
+      "level_db": 1.5
+    },
+    {
+      "song": 6,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 373.5,
+      "pitch": 0.468,
+      "level_db": 1.5
+    },
+    {
+      "song": 6,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.468,
+      "level_db": 1.5
+    },
+    {
+      "song": 7,
+      "instrument": "kick_toms",
+      "max_hz": 170.0,
+      "model": "long kick",
+      "level_db": -2.7
+    },
+    {
+      "song": 7,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 197.9,
+      "pitch": 0.468,
+      "level_db": 0.5
+    },
+    {
+      "song": 7,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 222.3,
+      "pitch": 0.468,
+      "level_db": 0.5
+    },
+    {
+      "song": 7,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.468,
+      "level_db": 0.5
+    },
+    {
+      "song": 8,
+      "instrument": "kick_toms",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 2.3
+    },
+    {
+      "song": 8,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 352.6,
+      "pitch": 0.471
+    },
+    {
+      "song": 8,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 444.5,
+      "pitch": 0.471
+    },
+    {
+      "song": 8,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.471
+    },
+    {
+      "song": 9,
+      "instrument": "kick_toms",
+      "max_hz": 134.9,
+      "model": "long kick",
+      "level_db": -0.2
+    },
+    {
+      "song": 9,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 264.3,
+      "pitch": 0.477
+    },
+    {
+      "song": 9,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 395.7,
+      "pitch": 0.477
+    },
+    {
+      "song": 9,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.477
+    },
+    {
+      "song": 10,
+      "instrument": "kick_toms",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 1.3
+    },
+    {
+      "song": 10,
+      "instrument": "kick_toms",
+      "model": "low tom",
+      "max_hz": 264.3,
+      "pitch": 0.372,
+      "level_db": 4.0
+    },
+    {
+      "song": 10,
+      "instrument": "kick_toms",
+      "model": "mid tom",
+      "max_hz": 395.7,
+      "pitch": 0.372,
+      "level_db": 4.0
+    },
+    {
+      "song": 10,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.372,
+      "level_db": 4.0
+    },
+    {
+      "song": 3,
+      "instrument": "snare",
+      "max_hz": 300,
+      "model": "booming snare",
+      "level_db": -0.2
+    },
+    {
+      "song": 6,
+      "instrument": "snare",
+      "model": "booming snare",
+      "level_db": -0.1
+    },
+    {
+      "song": 8,
+      "instrument": "snare",
+      "model": "booming snare",
+      "level_db": 0.2
+    },
+    {
+      "song": 7,
+      "instrument": "snare",
+      "model": "snare",
+      "level_db": -0.5
+    },
+    {
+      "song": 3,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": 3.9
+    },
+    {
+      "song": 6,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": 4.0
+    },
+    {
+      "song": 8,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": 4.5
+    },
+    {
+      "song": 9,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": -2.9
+    },
+    {
+      "song": 8,
+      "instrument": "open_hat_2",
+      "model": "open hat",
+      "level_db": 4.1
+    },
+    {
+      "song": 0,
+      "instrument": "snare",
+      "max_hz": 170,
+      "model": "low tuned snare",
+      "level_db": -4.9,
+      "pitch": 0.5
+    },
+    {
+      "song": 0,
+      "instrument": "snare",
+      "model": "tuned snare",
+      "pitch": 0.5,
+      "level_db": -4.3
+    },
+    {
+      "song": 0,
+      "instrument": "open_hat",
+      "model": "open hat",
+      "level_db": 6.4
+    },
+    {
+      "song": 1,
+      "instrument": "kick",
+      "model": "long kick",
+      "level_db": -1.3
+    },
+    {
+      "song": 1,
+      "instrument": "snare",
+      "model": "snare",
+      "level_db": -4.7
+    },
+    {
+      "song": 11,
+      "instrument": "kick_toms",
+      "max_hz": 170,
+      "model": "long kick",
+      "level_db": 1.8
+    },
+    {
+      "song": 11,
+      "instrument": "kick_toms",
+      "max_hz": 230,
+      "model": "low tom",
+      "pitch": 0.457,
+      "level_db": 3.2
+    },
+    {
+      "song": 11,
+      "instrument": "kick_toms",
+      "max_hz": 340,
+      "model": "mid tom",
+      "pitch": 0.457,
+      "level_db": 3.2
+    },
+    {
+      "song": 11,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.457,
+      "level_db": 3.2
+    },
+    {
+      "song": 11,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": 1.7
+    },
+    {
+      "song": 13,
+      "instrument": "kick_toms",
+      "max_hz": 135,
+      "model": "long kick",
+      "level_db": 1.1
+    },
+    {
+      "song": 13,
+      "instrument": "kick_toms",
+      "max_hz": 200,
+      "model": "low tom",
+      "pitch": 0.431,
+      "level_db": 3.9
+    },
+    {
+      "song": 13,
+      "instrument": "kick_toms",
+      "max_hz": 300,
+      "model": "mid tom",
+      "pitch": 0.431,
+      "level_db": 3.9
+    },
+    {
+      "song": 13,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.431,
+      "level_db": 3.9
+    },
+    {
+      "song": 13,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": 2.4
+    },
+    {
+      "song": 14,
+      "instrument": "kick_toms",
+      "max_hz": 135,
+      "model": "long kick",
+      "level_db": 1.4
+    },
+    {
+      "song": 14,
+      "instrument": "kick_toms",
+      "max_hz": 200,
+      "model": "low tom",
+      "pitch": 0.431,
+      "level_db": 3.9
+    },
+    {
+      "song": 14,
+      "instrument": "kick_toms",
+      "max_hz": 300,
+      "model": "mid tom",
+      "pitch": 0.431,
+      "level_db": 3.9
+    },
+    {
+      "song": 14,
+      "instrument": "kick_toms",
+      "model": "high tom",
+      "pitch": 0.431,
+      "level_db": 3.9
+    },
+    {
+      "song": 14,
+      "instrument": "open_hat",
+      "model": "open hat",
+      "level_db": 3.2
+    },
+    {
+      "song": 15,
+      "instrument": "kick_snare",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 1.6
+    },
+    {
+      "song": 15,
+      "instrument": "kick_snare",
+      "model": "soft-wire tuned snare",
+      "pitch": 0.5,
+      "level_db": -4.5
+    },
+    {
+      "song": 15,
+      "instrument": "snare",
+      "model": "booming snare",
+      "level_db": -0.3
+    },
+    {
+      "song": 16,
+      "instrument": "kick_snare",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 1.6
+    },
+    {
+      "song": 16,
+      "instrument": "kick_snare",
+      "model": "soft-wire tuned snare",
+      "pitch": 0.5,
+      "level_db": -4.5
+    },
+    {
+      "song": 16,
+      "instrument": "snare",
+      "model": "booming snare",
+      "level_db": -0.3
+    },
+    {
+      "song": 17,
+      "instrument": "kick_snare",
+      "max_hz": 151.4,
+      "model": "long kick",
+      "level_db": 2.2
+    },
+    {
+      "song": 17,
+      "instrument": "kick_snare",
+      "model": "soft-wire tuned snare",
+      "pitch": 0.5,
+      "level_db": -4.5
+    },
+    {
+      "song": 17,
+      "instrument": "snare",
+      "model": "booming snare"
+    },
+    {
+      "song": 17,
+      "instrument": "closed_hat",
+      "model": "closed hat",
+      "level_db": 3.3
+    },
+    {
+      "song": 8,
+      "instrument": "open_hat",
+      "model": "open hat",
+      "level_db": 6.0
+    },
+    {
+      "song": 0,
+      "instrument": "high",
+      "model": "voice",
+      "level_db": -1.0
+    },
+    {
+      "song": 2,
+      "instrument": "mid",
+      "model": "voice",
+      "level_db": 3.5
+    },
+    {
+      "song": 2,
+      "instrument": "bass",
+      "model": "voice",
+      "level_db": 2.2
+    },
+    {
+      "song": 2,
+      "instrument": "high",
+      "model": "voice",
+      "level_db": 2.4
+    },
+    {
+      "song": 3,
+      "instrument": "mid",
+      "model": "voice",
+      "level_db": 2.0
+    },
+    {
+      "song": 4,
+      "instrument": "mid",
+      "model": "voice",
+      "level_db": 1.2
+    },
+    {
+      "song": 4,
+      "instrument": "low",
+      "model": "voice",
+      "level_db": 0.8
+    },
+    {
+      "song": 5,
+      "instrument": "chords_3",
+      "model": "voice",
+      "level_db": 0.8
+    },
+    {
+      "song": 6,
+      "instrument": "chords",
+      "model": "voice",
+      "level_db": 0.9
+    },
+    {
+      "song": 6,
+      "instrument": "mid",
+      "model": "voice",
+      "level_db": 3.0
+    },
+    {
+      "song": 8,
+      "instrument": "mid",
+      "model": "voice",
+      "level_db": 0.8
+    },
+    {
+      "song": 10,
+      "instrument": "high",
+      "model": "voice",
+      "level_db": 1.0
+    },
+    {
+      "song": 10,
+      "instrument": "mid",
+      "model": "voice",
+      "level_db": 1.4
+    },
+    {
+      "song": 13,
+      "instrument": "high_2",
+      "model": "voice",
+      "level_db": 1.8
+    },
+    {
+      "song": 15,
+      "instrument": "mid_2",
+      "model": "voice",
+      "level_db": 0.9
+    },
+    {
+      "song": 16,
+      "instrument": "bass_2",
+      "model": "voice",
+      "level_db": 1.2
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+# Herzog Zwei's network game server as a systemd service (docs/netplay.md,
+# "Running a server"). As root, from the tree's top after `make hz_server`:
+#
+#   install -m 755 hz_server /usr/local/bin/hz_server
+#   install -m 644 server/hz-server.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now hz-server
+#   ufw allow 19890/udp            # or your firewall's way
+#
+# It runs as a user of its own made for it (DynamicUser), with the files
+# read-only, no devices but the random ones, and IP sockets alone. Its log:
+# journalctl -u hz-server.
+
+[Unit]
+Description=Herzog Zwei network game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/hz_server --port 19890
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

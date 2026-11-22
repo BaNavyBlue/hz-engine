@@ -1,0 +1,198 @@
+# Builds the game on Windows, Linux and macOS on every push, and keeps each
+# package as the run's artifact (Actions, the run, Artifacts). A tag v*
+# (git tag v0.1.0 && git push origin v0.1.0) also publishes the three as a
+# GitHub release. No game data is used or made here: the packages carry the
+# engine, and each player's game makes its files from their own cartridge
+# image the first time it starts.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SDL_TAG: release-3.4.18
+  Q_TAG: v1.5.4
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
+  CFLAGS_RELEASE: -std=c11 -Wall -Wextra -Wpedantic -O2
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-sdl3
+            mingw-w64-ucrt-x86_64-python
+      - name: Q
+        run: git clone --depth 1 --branch "$Q_TAG" --recurse-submodules --shallow-submodules https://github.com/cycfi/Q.git ../Q
+      - name: Build (static, no console window: one .exe, nothing beside it)
+        run: |
+          cd hz
+          touch shaders/*
+          make -j4 build/dist/HerzogZwei.exe Q=1 Q_DIR="$(cd ../../Q && pwd)" CFLAGS="$CFLAGS_RELEASE"
+          objdump -p build/dist/HerzogZwei.exe | grep 'DLL Name'
+      - name: Package
+        run: |
+          L=/ucrt64/share/licenses
+          python3 tools/make_release.py --platform windows --exe hz/build/dist/HerzogZwei.exe \
+              --version "$VERSION" \
+              --license SDL3 "$(cygpath -m $L/SDL3)" \
+              --license libiconv "$(cygpath -m $L/libiconv)" \
+              --license winpthreads "$(cygpath -m $L/winpthreads)" \
+              --license gcc-runtime "$(cygpath -m $L/libgcc)" \
+              --license Q ../Q/LICENSE --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hz-engine-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+              libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+              libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+              libdecor-0-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+              libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev liburing-dev
+      - uses: actions/cache@v4
+        id: sdl
+        with:
+          path: ${{ runner.temp }}/sdl3
+          key: sdl3-static-${{ runner.os }}-${{ env.SDL_TAG }}-1
+      - name: SDL3 (static)
+        if: steps.sdl.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL"
+          cmake -S "$RUNNER_TEMP/SDL" -B "$RUNNER_TEMP/SDL/build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+              -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build "$RUNNER_TEMP/SDL/build"
+          cmake --install "$RUNNER_TEMP/SDL/build"
+          cp "$RUNNER_TEMP/SDL/LICENSE.txt" "$RUNNER_TEMP/sdl3/LICENSE.txt"
+      - name: Q
+        run: git clone --depth 1 --branch "$Q_TAG" --recurse-submodules --shallow-submodules https://github.com/cycfi/Q.git ../Q
+      - name: Build (SDL3 and the C++ runtime linked in)
+        run: |
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/sdl3/lib/pkgconfig"
+          cd hz
+          touch shaders/*
+          make -j4 hz Q=1 Q_DIR="$(cd ../../Q && pwd)" CFLAGS="$CFLAGS_RELEASE" \
+              SDL_CFLAGS="$(pkg-config --cflags sdl3)" \
+              SDL_LIBS="$(pkg-config --static --libs sdl3)" \
+              Q_LDLIBS="-Wl,-Bstatic -lstdc++ -Wl,-Bdynamic" LDLIBS="-lm -static-libgcc"
+          strip hz
+          ldd hz
+      - name: Package
+        run: |
+          python3 tools/make_release.py --platform linux --exe hz/hz --version "$VERSION" \
+              --license SDL3 "$RUNNER_TEMP/sdl3/LICENSE.txt" --license Q ../Q/LICENSE --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hz-engine-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    env:
+      ARCHS: -arch arm64 -arch x86_64 -mmacosx-version-min=11.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: brew install ninja pkgconf || true
+      - uses: actions/cache@v4
+        id: sdl
+        with:
+          path: ${{ runner.temp }}/sdl3
+          key: sdl3-static-${{ runner.os }}-universal-${{ env.SDL_TAG }}-1
+      - name: SDL3 (static, Apple silicon and Intel)
+        if: steps.sdl.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL"
+          cmake -S "$RUNNER_TEMP/SDL" -B "$RUNNER_TEMP/SDL/build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+              -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF \
+              -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build "$RUNNER_TEMP/SDL/build"
+          cmake --install "$RUNNER_TEMP/SDL/build"
+          cp "$RUNNER_TEMP/SDL/LICENSE.txt" "$RUNNER_TEMP/sdl3/LICENSE.txt"
+      - name: Q
+        run: git clone --depth 1 --branch "$Q_TAG" --recurse-submodules --shallow-submodules https://github.com/cycfi/Q.git ../Q
+      - name: Build (universal)
+        run: |
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/sdl3/lib/pkgconfig"
+          cd hz
+          touch shaders/*
+          make -j4 hz Q=1 Q_DIR="$(cd ../../Q && pwd)" CC=clang CXX=clang++ \
+              CFLAGS="$CFLAGS_RELEASE $ARCHS" \
+              Q_CXXFLAGS="-std=c++20 -Wall -Wextra -Wpedantic -O2 $ARCHS" \
+              SDL_CFLAGS="$(pkg-config --cflags sdl3)" \
+              SDL_LIBS="$(pkg-config --static --libs sdl3)"
+          strip hz
+          lipo -info hz
+          otool -L hz
+      - name: Package
+        run: |
+          python3 tools/make_release.py --platform macos --exe hz/hz --version "$VERSION" \
+              --license SDL3 "$RUNNER_TEMP/sdl3/LICENSE.txt" --license Q ../Q/LICENSE --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hz-engine-macos
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat > notes.md <<'NOTES'
+          Bring your own cartridge: these packages hold the engine, none of the game.
+
+          1. Download the package for your system and unpack it.
+          2. Run `hz\HerzogZwei.exe` (Windows) or `./hz/hz`.
+          3. The first time, it asks for your own *Herzog Zwei* (USA) image: drop it onto its window.
+             It makes the game's files from it (a second or two) and the game starts. Nothing else is needed.
+
+          README.txt in each package says more. Not affiliated with SEGA or Technosoft.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" hz-engine-* SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md

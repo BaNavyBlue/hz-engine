@@ -1,0 +1,229 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct type_Sharp
+{
+    float4 dst;
+    int4 _step;
+    float4 ladder[8];
+    float4 to2020_0;
+    float4 to2020_1;
+    float4 to2020_2;
+    float4 enc;
+    int4 mode;
+};
+
+struct main0_out
+{
+    float4 out_var_SV_Target0 [[color(0)]];
+};
+
+fragment main0_out main0(constant type_Sharp& Sharp [[buffer(0)]], texture2d<float> Frame [[texture(0)]], texture2d<float> Palette [[texture(1)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float4 _409;
+    do
+    {
+        int _66 = int(gl_FragCoord.x);
+        int _69 = int(gl_FragCoord.y);
+        int _72 = int(Sharp.dst.x);
+        int _75 = int(Sharp.dst.y);
+        int _78 = int(Sharp.dst.z);
+        int _81 = int(Sharp.dst.w);
+        bool _86;
+        if (_66 >= _72)
+        {
+            _86 = _69 < _75;
+        }
+        else
+        {
+            _86 = true;
+        }
+        bool _92;
+        if (!_86)
+        {
+            _92 = _66 >= (_72 + _78);
+        }
+        else
+        {
+            _92 = true;
+        }
+        bool _98;
+        if (!_92)
+        {
+            _98 = _69 >= (_75 + _81);
+        }
+        else
+        {
+            _98 = true;
+        }
+        if (_98)
+        {
+            _409 = float4(0.0, 0.0, 0.0, 1.0);
+            break;
+        }
+        int _107 = (((2 * (_66 - _72)) + 1) * Sharp._step.x) - _78;
+        int _114 = (((2 * (_69 - _75)) + 1) * Sharp._step.y) - _81;
+        int _115 = 2 * _78;
+        int _116 = _107 / _115;
+        int _117 = 2 * _81;
+        int _118 = _114 / _117;
+        float _124 = float(_107 - ((_116 * 2) * _78)) / float(_115);
+        int _131 = Sharp._step.x - 1;
+        int _135 = Sharp._step.y - 1;
+        int _142 = (min(_116, _131) * Sharp._step.z) / Sharp._step.x;
+        int _146 = (min(_118, _135) * Sharp._step.w) / Sharp._step.y;
+        int3 _162 = int3((Palette.read(uint2(int3(int((Frame.read(uint2(int3(_142, _146, 0).xy), 0).x * 255.0) + 0.5), 0, 0).xy), 0).xyz * 255.0) + float3(0.5));
+        float3 _172 = float3(Sharp.ladder[_162.x].x, Sharp.ladder[_162.y].x, Sharp.ladder[_162.z].x);
+        int _174 = (min((_116 + 1), _131) * Sharp._step.z) / Sharp._step.x;
+        int3 _190 = int3((Palette.read(uint2(int3(int((Frame.read(uint2(int3(_174, _146, 0).xy), 0).x * 255.0) + 0.5), 0, 0).xy), 0).xyz * 255.0) + float3(0.5));
+        int _202 = (min((_118 + 1), _135) * Sharp._step.w) / Sharp._step.y;
+        int3 _218 = int3((Palette.read(uint2(int3(int((Frame.read(uint2(int3(_142, _202, 0).xy), 0).x * 255.0) + 0.5), 0, 0).xy), 0).xyz * 255.0) + float3(0.5));
+        float3 _228 = float3(Sharp.ladder[_218.x].x, Sharp.ladder[_218.y].x, Sharp.ladder[_218.z].x);
+        int3 _244 = int3((Palette.read(uint2(int3(int((Frame.read(uint2(int3(_174, _202, 0).xy), 0).x * 255.0) + 0.5), 0, 0).xy), 0).xyz * 255.0) + float3(0.5));
+        float3 _257 = _172 + ((float3(Sharp.ladder[_190.x].x, Sharp.ladder[_190.y].x, Sharp.ladder[_190.z].x) - _172) * _124);
+        float3 _263 = _257 + (((_228 + ((float3(Sharp.ladder[_244.x].x, Sharp.ladder[_244.y].x, Sharp.ladder[_244.z].x) - _228) * _124)) - _257) * (float(_114 - ((_118 * 2) * _81)) / float(_117)));
+        float4 _408;
+        do
+        {
+            if (Sharp.mode.x == 0)
+            {
+                _408 = float4(_263, 1.0);
+                break;
+            }
+            float _275 = _263.x;
+            float _293;
+            do
+            {
+                if (_275 <= 0.0)
+                {
+                    _293 = 0.0;
+                    break;
+                }
+                if (_275 >= 1.0)
+                {
+                    _293 = 1.0;
+                    break;
+                }
+                float _292;
+                if (_275 <= 0.040449999272823333740234375)
+                {
+                    _292 = _275 * 0.077399380505084991455078125;
+                }
+                else
+                {
+                    _292 = powr((_275 + 0.054999999701976776123046875) * 0.947867333889007568359375, 2.400000095367431640625);
+                }
+                _293 = _292;
+                break;
+            } while(false);
+            float _294 = _263.y;
+            float _312;
+            do
+            {
+                if (_294 <= 0.0)
+                {
+                    _312 = 0.0;
+                    break;
+                }
+                if (_294 >= 1.0)
+                {
+                    _312 = 1.0;
+                    break;
+                }
+                float _311;
+                if (_294 <= 0.040449999272823333740234375)
+                {
+                    _311 = _294 * 0.077399380505084991455078125;
+                }
+                else
+                {
+                    _311 = powr((_294 + 0.054999999701976776123046875) * 0.947867333889007568359375, 2.400000095367431640625);
+                }
+                _312 = _311;
+                break;
+            } while(false);
+            float _313 = _263.z;
+            float _331;
+            do
+            {
+                if (_313 <= 0.0)
+                {
+                    _331 = 0.0;
+                    break;
+                }
+                if (_313 >= 1.0)
+                {
+                    _331 = 1.0;
+                    break;
+                }
+                float _330;
+                if (_313 <= 0.040449999272823333740234375)
+                {
+                    _330 = _313 * 0.077399380505084991455078125;
+                }
+                else
+                {
+                    _330 = powr((_313 + 0.054999999701976776123046875) * 0.947867333889007568359375, 2.400000095367431640625);
+                }
+                _331 = _330;
+                break;
+            } while(false);
+            float3 _335 = float3(_293, _312, _331) * Sharp.enc.y;
+            if (Sharp.mode.x == 1)
+            {
+                float3 _354 = float3(dot(Sharp.to2020_0.xyz, _335), dot(Sharp.to2020_1.xyz, _335), dot(Sharp.to2020_2.xyz, _335)) * Sharp.enc.x;
+                float _355 = _354.x;
+                float _369;
+                do
+                {
+                    if (_355 <= 0.0)
+                    {
+                        _369 = 0.0;
+                        break;
+                    }
+                    float _362 = powr(precise::min(_355, 1.0), 0.1593017578125);
+                    _369 = powr((0.8359375 + (18.8515625 * _362)) / (1.0 + (18.6875 * _362)), 78.84375);
+                    break;
+                } while(false);
+                float _370 = _354.y;
+                float _384;
+                do
+                {
+                    if (_370 <= 0.0)
+                    {
+                        _384 = 0.0;
+                        break;
+                    }
+                    float _377 = powr(precise::min(_370, 1.0), 0.1593017578125);
+                    _384 = powr((0.8359375 + (18.8515625 * _377)) / (1.0 + (18.6875 * _377)), 78.84375);
+                    break;
+                } while(false);
+                float _385 = _354.z;
+                float _399;
+                do
+                {
+                    if (_385 <= 0.0)
+                    {
+                        _399 = 0.0;
+                        break;
+                    }
+                    float _392 = powr(precise::min(_385, 1.0), 0.1593017578125);
+                    _399 = powr((0.8359375 + (18.8515625 * _392)) / (1.0 + (18.6875 * _392)), 78.84375);
+                    break;
+                } while(false);
+                _408 = float4(_369, _384, _399, 1.0);
+                break;
+            }
+            _408 = float4(_335 * Sharp.enc.x, 1.0);
+            break;
+        } while(false);
+        _409 = _408;
+        break;
+    } while(false);
+    out.out_var_SV_Target0 = _409;
+    return out;
+}
+

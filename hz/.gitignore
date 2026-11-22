@@ -1,0 +1,107 @@
+# ROMs and disc images: never commit these (the hooks block them as well)
+*.smd
+*.gen
+*.sms
+*.gg
+*.sg
+*.32x
+*.iso
+*.cue
+*.gdi
+*.chd
+*.cdi
+# Built ROM: add your build's output name here, e.g. built.bin
+
+# Build output
+*.o
+*.lst
+*.log
+build/
+out/
+# The programs make builds (on Windows NAME.exe), its source checksum, and
+# the ROM image `make rom` assembles from asm/ with its symbols.
+*.exe
+/hz
+/hz_audiolog
+/hz_shot
+/hz_unpack
+/hz_headless
+/hz_headless_q
+/hz_loop
+/hz_mech
+/hz_hud
+/hz_anim
+/hz_shots
+/hz_unitmove
+/hz_roundtrip
+/hz_sound
+/hz_ymchan
+/hz_unitai
+/hz_ordermenu
+/hz_mechai
+/hz_front
+/hz_gameend
+/hz_demo
+/hz_netcheck
+/hz_rumble
+/hz_controls
+/hz_server
+/hz_netbot
+/hz_netai
+/hz_arena
+/hz_arena_ab
+/hz_replay
+/hz_repair
+/hz_assets
+/hz_gameid
+# (Session 56) The network servers a package knows: the packager's.
+/servers.txt
+/hz_qdrums
+/crt_ref
+/crt_gpu_check
+/.srcsum
+/hz.md
+# (Session 78) hz.sym, its symbols, is checked in: the map of the original
+# ROM that tools/hz_extract.py reads a player's cartridge image through
+# (docs/first_start.md). `make rom` writes it again; commit it when the
+# disassembly moves a label.
+# What the checks write, and the game's saves and settings when run here.
+/shots/
+/pans/
+/units/
+/loop/
+/mech/
+/hud/
+/anim/
+/combat/
+/unitmove/
+/songs/
+/crt_reference/
+/saves/
+/mods/
+# (Session 59) Recorded games (saves/replays/, or copied anywhere): a
+# player's own, never the repo's
+*.hzr
+
+# Python's bytecode cache (the checkers import tools/*.py)
+__pycache__/
+
+# A stray copy of this repo unpacked inside it (its own .git); never commit it
+/herzog-zwei/
+
+# Editor and OS clutter
+.DS_Store
+Thumbs.db
+__MACOSX/
+
+# Extracted images: regenerate them with the tools instead of committing them.
+/hz_gfx.zip
+/frame.png
+/maps_contact.png
+/moved.png
+/photo_68420_0.png
+/title_logo.png
+/units.png
+
+# (macOS) clang's debug symbols beside each program (-g)
+*.dSYM/

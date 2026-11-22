@@ -1,0 +1,49 @@
+# The server's nightmare AI (server/hz_netai.c, docs/netplay.md), one game
+# at a time an instance, beside hz-server.service. As root, from the tree's
+# top after `make hz_netai`:
+#
+#   install -m 755 hz_netai /usr/local/bin/hz_netai
+#   mkdir -p /usr/local/share/hz && cp -r assets /usr/local/share/hz/
+#   install -m 644 server/hz-netai@.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now hz-netai@1 hz-netai@2
+#
+# The assets must be the players' byte for byte (the same commit's, no
+# mods), or the players see it as OTHER GAME. Its log: journalctl -u
+# 'hz-netai@*'. (Session 67) Its recordings, a game each:
+# /var/lib/hz-netai/N/*.hzr (as root; `hz_replay ASSETS FILE --minutes`).
+
+[Unit]
+Description=Herzog Zwei nightmare AI player %i
+After=hz-server.service
+Wants=hz-server.service
+
+[Service]
+ExecStart=/usr/local/bin/hz_netai /usr/local/share/hz/assets --server 127.0.0.1:19890 --replays /var/lib/hz-netai/%i
+# (session 67) its recordings, a game each: hz_replay reads them
+StateDirectory=hz-netai/%i
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

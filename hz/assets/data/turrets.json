@@ -1,0 +1,52 @@
+{
+  "turrets": [
+    {
+      "type": 6,
+      "name": "TURRET_{B8}",
+      "price": 200,
+      "hp": 160,
+      "size": 24,
+      "ammo": 60,
+      "fuel": 1408,
+      "sprite_size": "$0A",
+      "speed": 0,
+      "overlay": "$00",
+      "fuel_use": 0,
+      "shot_speed": 32,
+      "shot_life": 25,
+      "fire_delay": 4,
+      "power": 28,
+      "sight": 2,
+      "build_time": 3,
+      "missiles": 0,
+      "missile_speed": 0,
+      "missile_life": 0,
+      "missile_delay": 0,
+      "orders": "$0002"
+    },
+    {
+      "type": 7,
+      "name": "TURRET_{B9}",
+      "price": 300,
+      "hp": 96,
+      "size": 24,
+      "ammo": 50,
+      "fuel": 1408,
+      "sprite_size": "$0A",
+      "speed": 0,
+      "overlay": "$00",
+      "fuel_use": 0,
+      "shot_speed": 16,
+      "shot_life": 112,
+      "fire_delay": 5,
+      "power": 16,
+      "sight": 4,
+      "build_time": 4,
+      "missiles": 0,
+      "missile_speed": 0,
+      "missile_life": 0,
+      "missile_delay": 0,
+      "orders": "$0002"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+hz/ is the private port's, as of: The game makes its own files from the player's cartridge, in C, on its first start
+Made by tools/sync_private.py; it empties this folder each time.
