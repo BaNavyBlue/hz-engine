@@ -1,7 +1,8 @@
 # Builds the game on Windows, Linux and macOS on every push, and keeps each
 # package as the run's artifact (Actions, the run, Artifacts). A tag v*
-# (git tag v0.1.0 && git push origin v0.1.0) also publishes the three as a
-# GitHub release. No game data is used or made here: the packages carry the
+# (git tag v0.1.0 && git push origin v0.1.0) also publishes the Windows and
+# Linux ones as a GitHub release; macOS is left out of releases for now (the
+# owner, 2026-11-24), and not built for a tag. No game data is used or made here: the packages carry the
 # engine, and each player's game makes its files from their own cartridge
 # image the first time it starts.
 name: build
@@ -43,7 +44,7 @@ jobs:
             mingw-w64-ucrt-x86_64-python
       - name: Q
         run: git clone --depth 1 --branch "$Q_TAG" --recurse-submodules --shallow-submodules https://github.com/cycfi/Q.git ../Q
-      - name: Build (static, no console window: one .exe, nothing beside it)
+      - name: Build (static, no console window, one .exe with nothing beside it)
         run: |
           cd hz
           touch shaders/*
@@ -118,6 +119,8 @@ jobs:
           if-no-files-found: error
 
   macos:
+    # not for a release yet: built on pushes to main only
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: macos-latest
     env:
       ARCHS: -arch arm64 -arch x86_64 -mmacosx-version-min=11.0
@@ -169,15 +172,19 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, macos]
+    needs: [windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: hz-engine-windows
           path: dist
-          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: hz-engine-linux
+          path: dist
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -187,10 +194,12 @@ jobs:
           cat > notes.md <<'NOTES'
           Bring your own cartridge: these packages hold the engine, none of the game.
 
-          1. Download the package for your system and unpack it.
-          2. Run `hz\HerzogZwei.exe` (Windows) or `./hz/hz`.
-          3. The first time, it asks for your own *Herzog Zwei* (USA) image: drop it onto its window.
-             It makes the game's files from it (a second or two) and the game starts. Nothing else is needed.
+          1. Download the package for your system (Windows, or Linux x86-64) and unpack it. No macOS package yet.
+          2. Run `hz\HerzogZwei.exe` (Windows) or `./hz/hz` (Linux).
+          3. The first time, it asks for your own *Herzog Zwei* (USA) image: 524,288 bytes,
+             SHA-1 `8f7262102c2b2334f0bc88ee6fd6b08797919176` (`.bin`, `.md`, `.gen`, `.smd`, or a `.zip` holding one).
+             Drop it onto its window. It makes the game's files from it (a second or two) and the game starts.
+             Nothing else is needed.
 
           README.txt in each package says more. Not affiliated with SEGA or Technosoft.
           NOTES

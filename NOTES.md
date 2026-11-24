@@ -40,6 +40,10 @@ file holds the decisions, what is proved and what is next.
 * Licence: MIT for the engine's own work (`LICENSE`, "Copyright (c) 2026
   BaNavyBlue"), including the disassembly's names in `hz/hz.sym`, which are
   the owner's own work. The third parties keep theirs (`NOTICE.md`).
+* (2026-11-24) Releases: Windows and Linux; macOS left out for now ("please
+  make all releases for repository except mac version for now"). The macOS
+  job still builds on pushes to main, not for a tag. The first release is
+  `v0.1.0`, as ps2-engine's.
 * Working builds come from the repository: GitHub Actions builds Windows,
   Linux and macOS on every push (artifacts), and a `v*` tag publishes them
   as a release. The Windows exe is `make build/dist/HerzogZwei.exe` (no
@@ -141,10 +145,14 @@ start".)
 
 ## Not yet run or seen
 
-* The GitHub Actions runs (no `gh` on this machine). The first push's
-  Linux job (and likely macOS's) must have failed on `png.h`.
-* The windowed game on Linux (SDL3, a display, the drop and the file
-  dialog) and anything on macOS.
+* The GitHub Actions runs are read by the owner (no `gh` on this
+  machine). Up to 2b2f725 the workflow file did not parse (a step's name
+  held `: `, copied from the skill's example), so Actions ran nothing;
+  fixed with the release commit, along with `make_release.py` naming a
+  dotted version's zip wrong (`v0.1.0` as `-v0.1.zip`; ps2-engine's fix).
+  The owner's own Linux build of 2b2f725 passed (2026-11-24).
+* The windowed game on Linux (a display, the drop and the file dialog)
+  and anything on macOS.
 * The first-start window's drop and file dialog in the packaged exe: the
   image was given on the command line (the private tree's build showed the
   window and its refusal).

@@ -15,7 +15,9 @@ nothing else to install. Nothing is downloaded or sent anywhere.
 ## Playing
 
 1. Download the package for your system from
-   [Releases](../../releases) and unpack it.
+   [Releases](../../releases) and unpack it: Windows or Linux (64-bit x86;
+   SDL3 is built in). There is no macOS release yet; on a Mac, build from
+   source (below).
 2. You need your own image of *Herzog Zwei* for the USA: 524,288 bytes,
    SHA-1 `8f7262102c2b2334f0bc88ee6fd6b08797919176` (commonly named
    "Herzog Zwei (U) [!]"). A `.bin`, `.md`, `.gen` or `.smd` file works,
@@ -27,8 +29,9 @@ nothing else to install. Nothing is downloaded or sent anywhere.
    the image dropped onto the program), the image is used at once.
 
 The packages are not signed. On Windows choose "More info", then "Run
-anyway". On macOS, run `xattr -dr com.apple.quarantine .` once in the
-unpacked folder.
+anyway". On Linux, choosing the image with Enter needs
+`xdg-desktop-portal` or `zenity`; dropping it onto the window, or naming it
+on the command line, needs neither.
 
 ## Building from source
 
@@ -70,7 +73,9 @@ extractor.
 
 Every push builds the game for Windows, Linux and macOS in GitHub Actions
 (`.github/workflows/build.yml`). The packages are kept as each run's
-artifacts. Pushing a tag `v*` publishes them as a release.
+artifacts. Pushing a tag `v*` publishes the Windows and Linux ones as a
+release (macOS is not released yet). The Linux one is built on Ubuntu
+24.04, so it needs a glibc as new as that one's (2.39).
 
 ## Layout
 
