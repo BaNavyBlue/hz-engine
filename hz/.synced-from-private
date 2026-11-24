@@ -1,2 +1,2 @@
-hz/ is the private port's, as of: png.h includes stddef.h: glibc's stdint.h has no size_t, so Linux didn't build (MinGW's has it)
+hz/ is the private port's, as of: The game's own words for its files: --help names the image, and a failed load says to delete data/units.json to have them made again (not make assets)
 Made by tools/sync_private.py; it empties this folder each time.

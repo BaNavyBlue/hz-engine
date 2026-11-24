@@ -1,8 +1,10 @@
 /* Herzog Zwei port: the game through a platform (SDL3, or headless).
  *
- * The game's data comes from assets/ (tools/hz_extract.py writes it from
- * the ROM once; the program itself never reads the ROM), all of it read
- * at start-up. Then the boot (Snd_Init's commands, v_options as a cold
+ * The game's data comes from assets/, all of it read at start-up. (Session
+ * 78) The game makes it itself the first time it starts, from the player's
+ * own cartridge image (src/extract/, docs/first_start.md; tools/
+ * hz_extract.py is the reference it is proved against); after that the
+ * cartridge is never read. Then the boot (Snd_Init's commands, v_options as a cold
  * boot leaves them) and MainLoop_Title, round and round: the title and
  * the options screen (MenuModule_Title, game/front.c), Game_SetupMode,
  * the map, Game_Start and Game_FrameLoop pass by pass. The menus and the
@@ -1243,9 +1245,14 @@ static int usage(void)
             "          [--scale N] [--aspect square|4:3|tv] [--fullscreen]\n"
             "          [--server HOST[:PORT]] [--name NAME] "
             "[--net quick|host|nightmare]\n"
-            "          [--view split|own]\n"
-            "  assets: what tools/hz_extract.py wrote from the ROM "
-            "(default: assets)\n"
+            "          [--view split|own] [IMAGE]\n"
+            "  assets: the game's files, which it makes itself the first "
+            "time it starts,\n"
+            "          from your cartridge image (default: assets)\n"
+            "  IMAGE: that image (.bin, .md, .gen, .smd, or a .zip holding "
+            "one), used at once\n"
+            "         on the first start; without it, the game asks for "
+            "it\n"
             "  mods: files read in place of assets/'s (default: mods, or "
             "HZ_MODS;\n"
             "        \"\" none; its README.txt says how)\n"
@@ -1427,10 +1434,12 @@ int main(int argc, char **argv)
     bool loaded = hz_assets_load(&assets, assets_dir);
     u64 assets_hash = hz_file_hash_end();
     if (!loaded) {
-        char text[600];
-        snprintf(text, sizeof text, "hz: can't load the assets from %s/ "
-                 "(the assets folder goes beside the game; from the "
-                 "source, make assets ROM=... writes it)", assets_dir);
+        char text[2200];        /* the folder, and made: up to 1023 */
+        /* (Session 78) the files are the game's own make: to make them
+         * again, the mark that they are made goes (docs/first_start.md) */
+        snprintf(text, sizeof text, "hz: can't load the game's files from "
+                 "%s/. To make them again from your cartridge image, "
+                 "delete %s and start the game again.", assets_dir, made);
         platform_alert(text);
         return 1;
     }
