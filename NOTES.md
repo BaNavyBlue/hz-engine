@@ -125,6 +125,14 @@ start".)
   and from the zip, the 144 made files were byte for byte the Windows
   build's, and with the port's five the network id was the same. The
   headless game with no files says how to make them.
+* **The first release, `v0.1.0`** (2026-11-24, the tag on 78c4b85): GitHub
+  Actions built the Windows and Linux packages and published them, the
+  owner saw both files on the release. The Actions runs are read by the
+  owner (no `gh` on this machine). Before it, up to 2b2f725, the workflow
+  file did not parse (a step's name held `: `, copied from the skill's
+  example), so Actions ran nothing; fixed with the release commit, along
+  with `make_release.py` naming a dotted version's zip wrong (`v0.1.0` as
+  `-v0.1.zip`). The owner's own Linux build of 2b2f725 passed too.
 * **The leak check** (`tools/rom_leak_check.py` over a copy of the 293
   files to commit, with the private tree's assets, and the ending's and
   menus' texts as known text): 7 files. The port's own five under
@@ -145,12 +153,6 @@ start".)
 
 ## Not yet run or seen
 
-* The GitHub Actions runs are read by the owner (no `gh` on this
-  machine). Up to 2b2f725 the workflow file did not parse (a step's name
-  held `: `, copied from the skill's example), so Actions ran nothing;
-  fixed with the release commit, along with `make_release.py` naming a
-  dotted version's zip wrong (`v0.1.0` as `-v0.1.zip`; ps2-engine's fix).
-  The owner's own Linux build of 2b2f725 passed (2026-11-24).
 * The windowed game on Linux (a display, the drop and the file dialog)
   and anything on macOS.
 * The first-start window's drop and file dialog in the packaged exe: the
@@ -159,8 +161,12 @@ start".)
 
 ## Next
 
-1. The owner creates github.com/BaNavyBlue/hz-engine (private) and says to
-   push; read the Actions runs; public when the owner says.
+1. Public when the owner says (the repository is private).
+2. macOS: its job builds on pushes to main; into the release once it has
+   been seen to pass and the owner says (the release job's `needs`, its
+   downloads and its notes).
+3. A later release: sync from the private tree, prove again (this file's
+   list), then a new tag `v0.1.1`, `v0.2.0` and so on.
 
 ## Open
 
