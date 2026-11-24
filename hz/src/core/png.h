@@ -3,6 +3,8 @@
 
 #include "hz_types.h"
 
+#include <stddef.h>
+
 /* Indexed PNG is the asset format for everything made of pixels.
  *
  * PNG colour type 3 stores exactly what the hardware stored: a plane of

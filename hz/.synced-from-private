@@ -1,2 +1,2 @@
-hz/ is the private port's, as of: The game makes its own files from the player's cartridge, in C, on its first start
+hz/ is the private port's, as of: png.h includes stddef.h: glibc's stdint.h has no size_t, so Linux didn't build (MinGW's has it)
 Made by tools/sync_private.py; it empties this folder each time.

@@ -112,6 +112,15 @@ start".)
   (none where it was started; no `.part` left), passed
   `tools/assets.sha256`, gave the same network id, and went on to the
   title screen. Started again, it went straight to the title.
+* **Linux** (2026-11-24, Ubuntu 24.04, gcc 13.3, no SDL3 there): the
+  first push did not build on Linux (`png.h` used `size_t` without
+  `<stddef.h>`, which MinGW's headers happen to give); fixed in the next
+  commit. Then `hz_headless`, `hz_assets` and `hz_gameid` built with no
+  warnings, and `make sdl-syntax` passed, which compiles the first-start
+  window's Linux branches against SDL's declarations. From the raw image
+  and from the zip, the 144 made files were byte for byte the Windows
+  build's, and with the port's five the network id was the same. The
+  headless game with no files says how to make them.
 * **The leak check** (`tools/rom_leak_check.py` over a copy of the 293
   files to commit, with the private tree's assets, and the ending's and
   menus' texts as known text): 7 files. The port's own five under
@@ -132,9 +141,10 @@ start".)
 
 ## Not yet run or seen
 
-* The GitHub Actions runs (no `gh` on this machine). The Linux and macOS
-  jobs are untested here.
-* The extractor and the first-start window on Linux and macOS.
+* The GitHub Actions runs (no `gh` on this machine). The first push's
+  Linux job (and likely macOS's) must have failed on `png.h`.
+* The windowed game on Linux (SDL3, a display, the drop and the file
+  dialog) and anything on macOS.
 * The first-start window's drop and file dialog in the packaged exe: the
   image was given on the command line (the private tree's build showed the
   window and its refusal).
