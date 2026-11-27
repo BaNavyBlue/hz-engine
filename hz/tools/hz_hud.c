@@ -31,7 +31,7 @@
  *   W addr word (every VRAM word in $E000-$FFFF that changed)
  *   L lasts after (16 values) */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/game.h"
 
 #include <stdio.h>
@@ -57,9 +57,25 @@ static u32 vram_write(u16 addr)
     return 0x40000000u | ((u32)(addr & 0x3FFF) << 16) | (u32)(addr >> 14);
 }
 
+/* A bar's first cell as the 68k keeps it: its VRAM address in the game's
+ * layout (layer B $E000, A $C000, the window $F000). */
+static u16 bar_vram(const HzGaugeBar *b)
+{
+    static const u16 BASE[LAYER_COUNT] = { 0xE000, 0xC000, 0xF000 };
+    return (u16)(BASE[b->layer] + b->row * 0x80 + b->col * 2);
+}
+
+/* A window cell n (0-$7FF) as a bar's first. */
+static void bar_at(HzGaugeBar *b, int n)
+{
+    b->layer = LAYER_W;
+    b->col = (u8)(n % PLANE_COLS);
+    b->row = (u8)(n / PLANE_COLS);
+}
+
 static void put_bar(FILE *f, const HzGaugeBar *b)
 {
-    fprintf(f, " %X %X", b->last, vram_write(b->addr));
+    fprintf(f, " %X %X", b->last, vram_write(bar_vram(b)));
     for (int k = 0; k < HZ_GAUGE_CELLS; k++) {
         fprintf(f, " %X", b->cells[k]);
     }
@@ -86,7 +102,7 @@ static void part_queue(FILE *f, HzGame *g)
                 memset(g->gauge_queue, 0, sizeof g->gauge_queue);
                 fill_cells(&g->gauge_queue[0], 0xDEAD);
                 u16 addr = (u16)(0xF000 + 2 * (vi & 0x3F));
-                hud_queue_bar(g, value, max, last + 1, addr);
+                hud_queue_bar(g, value, max, last + 1, LAYER_W, vi & 0x3F, 0);
                 fprintf(f, "Q %X %X %X %X |", value, max, last,
                         vram_write(addr));
                 int index = -1;
@@ -169,7 +185,7 @@ static void part_update(FILE *f, HzGame *g, int states)
             HzGaugeBar *b = &g->gauge_queue[i];
             if (busy & (1u << i)) {
                 b->last = (u16)(1 + rng_below(15));
-                b->addr = 0x1234;
+                bar_at(b, 0x1A);
                 fill_cells(b, 0xBEEF);
             } else {
                 fill_cells(b, 0xDEAD);
@@ -205,9 +221,13 @@ static void part_update(FILE *f, HzGame *g, int states)
     }
 }
 
+/* (Half B of docs/hackable.md's step 1) The cartridge's VRAM, laid out
+ * from the draw layer's changes by tools/video_vdp.c. */
+static VideoVdp g_cart;
+
 static void part_flush(FILE *f, HzGame *g, int flushes)
 {
-    Vdp *v = g->vdp;
+    Vdp *v = g_cart.vdp;
     static u8 before[0x2000];
     for (int n = 0; n < flushes; n++) {
         for (int a = 0xE000; a < 0x10000; a += 2) {
@@ -220,7 +240,7 @@ static void part_flush(FILE *f, HzGame *g, int flushes)
         for (int i = 0; i < HZ_GAUGE_BARS; i++) {
             HzGaugeBar *b = &g->gauge_queue[i];
             b->last = (rng_below(3) == 0) ? 0 : (u16)rng_below(16);
-            b->addr = (u16)(0xF000 + 2 * rng_below(0x7E0));
+            bar_at(b, rng_below(0x7E0));
             for (int k = 0; k < HZ_GAUGE_CELLS; k++) {
                 b->cells[k] = (u16)rng_next();
             }
@@ -273,11 +293,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "hz_hud: can't write %s\n", argv[1]);
         return 1;
     }
+    static Video video;
     static Vdp vdp;
     static HzGame game;
+    video_init(&video);
     vdp_reset(&vdp);
+    video_vdp_watch(&g_cart, &video, &vdp);
     memset(&game, 0, sizeof game);
-    game.vdp = &vdp;
+    game.video = &video;
     fprintf(f, "HZH1\n");
     part_queue(f, &game);
     part_update(f, &game, states);

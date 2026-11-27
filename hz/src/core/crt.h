@@ -3,7 +3,7 @@
 
 #include "cram.h"
 #include "hz_types.h"
-#include "hz_vdp.h"
+#include "video.h"
 
 /* The CRT simulation, brought over from the PS2 port (its src/core/crt.c
  * and crt.h, builds 105-108a) line for line, so a fix can go either way:

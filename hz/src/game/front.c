@@ -5,55 +5,57 @@
 #include "front.h"
 #include "tables.h"
 
-/* -- the VDP ------------------------------------------------------------- */
+/* -- the screen ----------------------------------------------------------- */
 
-/* M_VDPSetAddr ($564A4): auto-increment 2, VRAM writes from addr. */
-void front_vram_at(HzGame *g, u16 addr)
+void front_tiles(HzGame *g, u16 first, const u8 *src, u32 bytes)
 {
-    vdp_reg(g->vdp, 0x8F02);
-    vdp_set_write(g->vdp, VDP_VRAM, addr);
+    video_load_tiles(g->video, first, src, bytes / 32);
 }
 
-void front_vram_bytes(HzGame *g, u16 addr, const u8 *src, u32 bytes)
+void front_put(HzGame *g, LayerId layer, int col, int row, u16 word)
 {
-    front_vram_at(g, addr);
-    vdp_write_bytes(g->vdp, src, bytes);
+    int at = (row * PLANE_COLS + col) & (PLANE_COLS * PLANE_ROWS - 1);
+    video_set_word(g->video, layer, at % PLANE_COLS, at / PLANE_COLS, word);
 }
 
-/* `bytes` of VRAM from addr set to `word`, through the data port (so the
- * address wraps at 64 KB, as Title_Run's clear relies on). */
-void front_vram_fill(HzGame *g, u16 addr, u32 bytes, u16 word)
+void front_picture(HzGame *g, LayerId layer, int col, int row, u16 first,
+                   int across, int rows)
 {
-    front_vram_at(g, addr);
-    for (u32 i = 0; i < bytes; i += 2) {
-        vdp_write16(g->vdp, word);
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < across; c++) {
+            front_put(g, layer, col + c, row + r, first++);
+        }
     }
 }
 
+void front_fill(HzGame *g, LayerId layer, int row, int rows, u16 word)
+{
+    video_fill_rows(g->video, layer, row, rows, cell_from_word(word));
+}
+
 /* M_DisplayOn ($565DC) / M_DisplayOff ($565F6): m_vdp_reg1's b6, then
- * register 1 from it. */
+ * the screen on or off by it. */
 void front_display_on(HzGame *g)
 {
     g->front.vdp_reg1 |= 0x40;
-    vdp_reg(g->vdp, (u16)(0x8100 | g->front.vdp_reg1));
+    video_display(g->video, true);
 }
 
 void front_display_off(HzGame *g)
 {
     g->front.vdp_reg1 &= (u8)~0x40;
-    vdp_reg(g->vdp, (u16)(0x8100 | g->front.vdp_reg1));
+    video_display(g->video, false);
 }
 
-/* M_Init ($5300C): interrupts masked; M_VDPInit (the menus' registers,
- * m_vdp_reg1 $24, display off); m_palette cleared and uploaded. */
+/* M_Init ($5300C): interrupts masked; M_VDPInit (the menus' layout:
+ * MenuVDPInitRegs, m_vdp_reg1 $24, display off); m_palette cleared and
+ * uploaded. */
 void front_init(HzGame *g)
 {
     HzFront *f = &g->front;
     g->interrupts_on = false;
     f->vdp_reg1 = 0x24;
-    for (int r = 0; r < 19; r++) {
-        vdp_reg(g->vdp, (u16)(0x8000 | (r << 8) | MENU_VDP_INIT_REGS[r]));
-    }
+    video_start_menus(g->video);
     front_display_off(g);
     for (int i = 0; i < 64; i++) {
         f->palette[i] = 0;
@@ -67,49 +69,46 @@ void front_reset_scroll(HzGame *g)
 {
     g->front.scroll_x_b = 0;
     g->front.scroll_y_b = 0;
-    vdp_set_write(g->vdp, VDP_VRAM, 0xDC00);
-    vdp_write16(g->vdp, 0);
-    vdp_set_write(g->vdp, VDP_VSRAM, 0);
-    vdp_write16(g->vdp, 0);
-    vdp_set_write(g->vdp, VDP_VRAM, 0xDC02);
-    vdp_write16(g->vdp, 0);
-    vdp_set_write(g->vdp, VDP_VSRAM, 2);
-    vdp_write16(g->vdp, 0);
+    video_scroll(g->video, LAYER_A, 0, 0);
+    video_scroll(g->video, LAYER_B, 0, 0);
 }
 
-/* M_ApplyScroll ($567EC): m_scroll_x_b / m_scroll_y_b to plane B. */
+/* M_ApplyScroll ($567EC): m_scroll_x_b / m_scroll_y_b to layer B (the
+ * 68k's H scroll word is m_scroll_x_b itself: layer pixel x - it shows at
+ * screen x). */
 void front_apply_scroll(HzGame *g)
 {
-    vdp_set_write(g->vdp, VDP_VRAM, 0xDC02);
-    vdp_write16(g->vdp, (u16)g->front.scroll_x_b);
-    vdp_set_write(g->vdp, VDP_VSRAM, 2);
-    vdp_write16(g->vdp, (u16)g->front.scroll_y_b);
+    video_scroll(g->video, LAYER_B, -g->front.scroll_x_b,
+                 g->front.scroll_y_b);
 }
 
 /* M_ClearSprites ($56816): m_sprites cleared and its 80 sprites uploaded
- * to $D800 (all zero: one 8 x 8 sprite off the top, linking nowhere). */
+ * to $D800 (all zero: one 8 x 8 sprite off the top, linking nowhere):
+ * the frame has no sprites. */
 void front_clear_sprites(HzGame *g)
 {
-    front_vram_fill(g, 0xD800, 0x280, 0);
+    video_sprites_begin(g->video);
 }
 
-/* M_ClearPlanes ($5684E): plane B and the window filled with the
+/* M_ClearPlanes ($5684E): layer B and the window filled with the
  * background tile ($30, palette 0), with the display off for it -- after
  * waiting for the frame if it was on. */
 void front_clear_planes(HzGame *g)
 {
     front_frame(g);
     front_display_off(g);
-    front_vram_fill(g, FRONT_PLANE_B, 0x2000, 0x0030);
+    front_fill(g, LAYER_B, 0, PLANE_ROWS, 0x0030);
+    front_fill(g, LAYER_W, 0, PLANE_ROWS, 0x0030);
     front_display_on(g);
 }
 
-/* M_BlankPlanes ($530C0): plane B and the window filled with $26BE --
+/* M_BlankPlanes ($530C0): layer B and the window filled with $26BE --
  * palette 1, tile $6BE, which is blank (Title_DrawLogo clears it, and the
  * logo's last tile, copied there by the slide, is blank too). */
 void front_blank_planes(HzGame *g)
 {
-    front_vram_fill(g, FRONT_PLANE_B, 0x2000, 0x26BE);
+    front_fill(g, LAYER_B, 0, PLANE_ROWS, 0x26BE);
+    front_fill(g, LAYER_W, 0, PLANE_ROWS, 0x26BE);
 }
 
 /* -- frames and pads ----------------------------------------------------- */
@@ -190,24 +189,20 @@ void front_cursor(HzGame *g, int x, int y)
     g->front.cursor_y = (u16)y;
 }
 
-static u16 cursor_cell(const HzFront *f)
-{
-    return (u16)(FRONT_WINDOW + ((f->cursor_y << 6) + f->cursor_x) * 2);
-}
-
-/* One character at the cursor's cell, the cursor on: tile = character -
- * $30 + m_text_attr (M_PrintStrAtCursor and the others' loop). */
+/* One character at the cursor's cell of the window, the cursor on: tile
+ * = character - $30 + m_text_attr (M_PrintStrAtCursor and the others'
+ * loop). */
 static void put_char(HzGame *g, u8 c)
 {
     HzFront *f = &g->front;
-    vdp_write16(g->vdp, (u16)(c - 0x30 + f->text_attr));
+    front_put(g, LAYER_W, f->cursor_x, f->cursor_y,
+              (u16)(c - 0x30 + f->text_attr));
     f->cursor_x++;
 }
 
 /* M_PrintStrAtCursor / M_PrintInlineAtCursor. */
 void front_print(HzGame *g, const char *text)
 {
-    front_vram_at(g, cursor_cell(&g->front));
     for (const char *s = text; *s != '\0'; s++) {
         put_char(g, (u8)(*s == ' ' ? MENU_BLANK : *s));
     }
@@ -223,7 +218,6 @@ void front_print_at(HzGame *g, int x, int y, const char *text)
 /* Text already in the font's codes (the assets' titles and names). */
 void front_print_codes(HzGame *g, const u8 *codes, int n)
 {
-    front_vram_at(g, cursor_cell(&g->front));
     for (int i = 0; i < n; i++) {
         put_char(g, codes[i]);
     }
@@ -243,7 +237,6 @@ void front_box_line(HzGame *g, int x, int y, char left, char fill,
                     char right, int n)
 {
     front_cursor(g, x, y);
-    front_vram_at(g, cursor_cell(&g->front));
     put_char(g, (u8)left);
     for (int i = 0; i < n; i++) {
         put_char(g, (u8)fill);
@@ -264,16 +257,13 @@ void front_box(HzGame *g, int x, int y, int w, int h)
 /* -- palettes ---------------------------------------------------------------- */
 
 /* M_UploadPaletteLines ($56F24): the lines of m_palette whose bits are in
- * mask (b0 line 0 ... b3 line 3) into CRAM. */
+ * mask (b0 line 0 ... b3 line 3) into the palette. */
 void front_upload_lines(HzGame *g, unsigned mask)
 {
-    vdp_reg(g->vdp, 0x8F02);
     for (int line = 0; line < 4; line++) {
         if (mask & (1u << line)) {
-            vdp_set_write(g->vdp, VDP_CRAM, (u16)(line * 32));
-            for (int i = 0; i < 16; i++) {
-                vdp_write16(g->vdp, g->front.palette[line * 16 + i]);
-            }
+            video_set_colours(g->video, line * 16,
+                              &g->front.palette[line * 16], 16);
         }
     }
 }

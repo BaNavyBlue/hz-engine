@@ -2,8 +2,8 @@
 
 #include "../audio/songtext.h"
 #include "../core/hz_file.h"
+#include "../core/cram.h"
 #include "../core/hz_mods.h"
-#include "../core/hz_vdp.h"
 #include "../core/json.h"
 #include "../core/png.h"
 
@@ -70,7 +70,7 @@ static bool load_colours(const char *path, u16 *words, int count)
     bool ok = img.pal_count >= count;
     if (ok) {
         for (int i = 0; i < count; i++) {
-            words[i] = vdp_rgb_cram(img.pal[i]);
+            words[i] = cram_from_rgb(img.pal[i]);
         }
     }
     png_free(&img);
@@ -157,7 +157,7 @@ static bool load_picture(const char *path, u8 *out, int across, int rows,
         ok = fail(path, "needs 16 colours in its palette");
     }
     for (int i = 0; ok && i < 16; i++) {
-        palette[i] = vdp_rgb_cram(img.pal[i]);
+        palette[i] = cram_from_rgb(img.pal[i]);
     }
     for (int t = 0; ok && t < across * rows; t++) {
         ok = pack_tile(&img, (t % across) * 8, (t / across) * 8, out + t * 32);

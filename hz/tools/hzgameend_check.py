@@ -110,16 +110,20 @@ class Cpu(hzfront_check.Cpu):
             if exp is not None and self.mismatch is None and (
                     k >= len(exp) or exp[k] != self.frames[k]):
                 self.mismatch = k
-                self.dump = bytes(self.vdp.vram)
+                self.dump = bytes(self.vdp.held.vram(self.vdp.vram))
                 raise Stop()
 
     def step(self):
         if self.pc == self.copy_start and self.snapshot is None:
-            self.snapshot = bytes(self.vdp.vram)
+            self.snapshot = (bytes(self.vdp.vram),
+                             bytes(self.vdp.held.mask))
         elif self.pc == self.copy_end and self.snapshot is not None:
             v = self.vdp.vram
+            m = self.vdp.held.mask
+            vram, held = self.snapshot
             for a in list(range(0, 0xB000)) + list(range(0xD000, 0x10000)):
-                v[a] = self.snapshot[a]
+                v[a] = vram[a]
+                m[a] = held[a]
             self.snapshot = None
         super().step()
 

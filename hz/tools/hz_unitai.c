@@ -23,7 +23,7 @@
  * port's references to and from the 68k's codes and pointers
  * (src/game/romcodes.h). */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 
@@ -429,7 +429,7 @@ static void frame_hook(HzGame *g, void *user)
 static int run_game(const HzAssets *assets, int map, int mode, int difficulty,
                     int frames, bool visits, const char *in, const char *out)
 {
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     static GameDump d;
     d.in = fopen(in, "wb");
@@ -437,8 +437,8 @@ static int run_game(const HzAssets *assets, int map, int mode, int difficulty,
     if (d.in == NULL || d.out == NULL) {
         return 1;
     }
-    vdp_reset(&vdp);
-    game_init(&game, assets, &vdp);
+    video_init(&video);
+    game_init(&game, assets, &video);
     HzGame *g = &game;
     g->frame = frame_hook;
     g->options[0] = (u8)mode;
@@ -504,10 +504,10 @@ int main(int argc, char **argv)
     if (in == NULL || out == NULL) {
         return 1;
     }
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     static u8 ram[RAM_SIZE];
-    vdp_reset(&vdp);
+    video_init(&video);
     int cases = 0;
     for (;;) {
         int calls = fgetc(in);
@@ -518,7 +518,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "hz_unitai: short case %d\n", cases);
             return 1;
         }
-        game_init(&game, &assets, &vdp);
+        game_init(&game, &assets, &video);
         load(&game, ram);
         for (int k = 0; k < calls; k++) {
             unit_ai_update(&game);

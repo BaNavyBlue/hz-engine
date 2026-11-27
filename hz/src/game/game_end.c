@@ -9,19 +9,17 @@
 
 #include "front.h"
 
-/* VRAM: the 2 x 2 font at tile $580 (a character c is tiles $580 + (c -
+/* The tiles: the 2 x 2 font at tile $580 (a character c is tiles $580 + (c -
  * $30) x 4: top-left, bottom-left, top-right, bottom-right), the photo at
- * tile $100; the text on plane B (high priority, so over the window), the
+ * tile $100; the text on layer B (high priority, so over the window), the
  * photo on the window in palette 3. */
-#define BIG_FONT_VRAM   0xB000
 #define BIG_FONT_TILE   0x580
-#define PHOTO_VRAM      0x2000
+#define PHOTO_TILE      0x100
 #define PHOTO_CELL      0x6100      /* palette 3, tile $100 */
 
 static void put_cell(HzGame *g, int x, int y, u16 word)
 {
-    vdp_set_write(g->vdp, VDP_VRAM, (u16)(FRONT_PLANE_B + (y * 64 + x) * 2));
-    vdp_write16(g->vdp, word);
+    front_put(g, LAYER_B, x, y, word);
 }
 
 /* M_PutBigChar ($56C78): c at the cursor on plane B, the cursor 2 cells
@@ -107,7 +105,7 @@ static void winner_show(HzGame *g)
 {
     const HzMenuAssets *m = &g->assets->menu;
     HzFront *f = &g->front;
-    front_vram_bytes(g, BIG_FONT_VRAM, m->winner_font, sizeof m->winner_font);
+    front_tiles(g, BIG_FONT_TILE, m->winner_font, sizeof m->winner_font);
     memcpy(f->palette, m->winner_palette, sizeof m->winner_palette);
     front_upload_lines(g, 0x07);
     front_set_target(g);
@@ -141,14 +139,8 @@ static void winner_show(HzGame *g)
         f->scroll_y_b = (s16)((f->scroll_y_b + 1) & 0xFF);
     } while (f->scroll_y_b != 1 && !g->quit);
 
-    front_vram_bytes(g, PHOTO_VRAM, m->tank_photo2, sizeof m->tank_photo2);
-    u16 cell = PHOTO_CELL;
-    for (int row = 0; row < 28; row++) {
-        front_vram_at(g, (u16)(FRONT_WINDOW + row * 0x80));
-        for (int col = 0; col < 40; col++) {
-            vdp_write16(g->vdp, cell++);
-        }
-    }
+    front_tiles(g, PHOTO_TILE, m->tank_photo2, sizeof m->tank_photo2);
+    front_picture(g, LAYER_W, 0, 0, PHOTO_CELL, 40, 28);
 }
 
 /* Winner_FadeIn ($54428): line 3 from black to WinnerPhotoPalette (the
@@ -280,7 +272,7 @@ void menu_game_end(HzGame *g)
     front_reset_scroll(g);
     front_clear_sprites(g);
     front_clear_planes(g);
-    front_vram_bytes(g, 0x0000, m->menu_font, sizeof m->menu_font);
+    front_tiles(g, 0x000, m->menu_font, sizeof m->menu_font);
     memcpy(f->palette, m->menu_palette, sizeof f->palette);
     front_set_target(g);
     front_upload_palette(g);

@@ -79,7 +79,7 @@
 #include "core/hz_file.h"
 #include "core/hz_mods.h"
 #include "core/pace.h"
-#include "core/hz_vdp.h"
+#include "core/video.h"
 #include "core/audio.h"
 #include "game/game.h"
 #include "game/replay.h"
@@ -681,7 +681,7 @@ static bool run_menu(Host *h, HzGame *g, Input *in)
     menu_begin(h, in);
     while (h->menu.open) {
         menu_compose(h);
-        platform_present(h->platform, h->composed, g->vdp->cram,
+        platform_present(h->platform, h->composed, g->video->colours,
                          h->menu.colours);
         if (!platform_pump(h->platform, in) || !menu_step(h, g, in)) {
             return false;
@@ -788,7 +788,7 @@ static void present_notice(Host *h, HzGame *g, const char *line1,
 {
     memcpy(h->composed, h->idx, sizeof h->composed);
     sysmenu_draw_notice(&h->menu, h->composed, line1, line2);
-    platform_show(h->platform, h->composed, g->vdp->cram, h->menu.colours);
+    platform_show(h->platform, h->composed, g->video->colours, h->menu.colours);
 }
 
 /* (Session 66) The Esc screen in a network game: a tick a pump beside
@@ -852,7 +852,7 @@ static bool net_wait_rival(Host *h, HzGame *g)
             pumped = now;
             if (h->menu.open) {
                 menu_compose(h);
-                platform_show(h->platform, h->composed, g->vdp->cram,
+                platform_show(h->platform, h->composed, g->video->colours,
                               h->menu.colours);
             } else if (now - began >= 250) {
                 present_notice(h, g, "WAITING FOR RIVAL", c->rival);
@@ -925,10 +925,10 @@ static void net_frame(Host *h, HzGame *g)
     }
     if (h->menu.open) {
         menu_compose(h);
-        platform_present(h->platform, h->composed, g->vdp->cram,
+        platform_present(h->platform, h->composed, g->video->colours,
                          h->menu.colours);
     } else {
-        platform_present(h->platform, h->idx, g->vdp->cram, NULL);
+        platform_present(h->platform, h->idx, g->video->colours, NULL);
     }
     Input in;
     if (!platform_pump(h->platform, &in)) {
@@ -971,12 +971,12 @@ static void on_frame(HzGame *g, void *user)
     if (g->quit) {
         return;
     }
-    vdp_render(g->vdp, h->idx);
+    video_compose(g->video, h->idx);
     if (h->net_game) {
         net_frame(h, g);        /* (session 56) */
         return;
     }
-    platform_present(h->platform, h->idx, g->vdp->cram, NULL);
+    platform_present(h->platform, h->idx, g->video->colours, NULL);
     Input in;
     if (!platform_pump(h->platform, &in)) {
         h->quit_program = true;
@@ -1049,7 +1049,7 @@ static void net_after_page(Host *h, HzGame *g)
     }
     while (h->menu.open) {
         menu_compose(h);
-        platform_present(h->platform, h->composed, g->vdp->cram,
+        platform_present(h->platform, h->composed, g->video->colours,
                          h->menu.colours);
         if (!platform_pump(h->platform, &in)) {
             h->quit_program = true;
@@ -1084,12 +1084,12 @@ static void net_after_page(Host *h, HzGame *g)
  * the same game, drawn apart. (Session 66) Each machine knows its side
  * (HzGame.net_player) for its own end, YOU WIN or YOU LOSE, and both
  * HQs down in the same second is a draw (HZ_FIX_DRAW). */
-static void run_net_game(Host *h, HzGame *g, Vdp *vdp,
+static void run_net_game(Host *h, HzGame *g, Video *video,
                          const HzAssets *assets)
 {
     NetClient *c = &h->net;
-    vdp_reset(vdp);
-    game_init(g, assets, vdp);
+    video_init(video);
+    game_init(g, assets, video);
     game_hooks(h, g, true);
     g->hw_version = 0xA0;
     g->options[0] = 5;
@@ -1569,10 +1569,10 @@ int main(int argc, char **argv)
     host.audio = audio;
     platform_attach_audio(host.platform, audio);
 
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
-    vdp_reset(&vdp);
-    game_init(&game, &assets, &vdp);
+    video_init(&video);
+    game_init(&game, &assets, &video);
     game_hooks(&host, &game, false);
     game.fixes = host.menu.fixes;       /* the settings' (default on) */
     /* EntryPoint and Boot_Continue: an overseas machine's version byte
@@ -1649,7 +1649,7 @@ int main(int argc, char **argv)
          * again. */
         if (host.net_start && !host.quit_program && rc == 0) {
             host.net_start = false;
-            run_net_game(&host, &game, &vdp, &assets);
+            run_net_game(&host, &game, &video, &assets);
             continue;
         }
         /* (Session 58) Left for the NETWORK page's NIGHTMARE: a game

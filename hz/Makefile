@@ -124,7 +124,7 @@ AUDIO := $(wildcard src/audio/*.c)
 NET := $(wildcard src/net/*.c)
 HDRS := $(wildcard src/core/*.h) $(wildcard src/game/*.h) \
         $(wildcard src/audio/*.h) $(wildcard src/net/*.h) \
-        $(wildcard src/extract/*.h)
+        $(wildcard src/extract/*.h) tools/hz_vdp.h tools/video_vdp.h
 PLATFORM_HDRS := src/platform/platform.h
 GPU_SRC := src/platform/crt_gpu.c
 GPU_HDRS := src/platform/crt_gpu.h
@@ -133,6 +133,11 @@ GPU_HDRS := src/platform/crt_gpu.h
 # that runs it (docs/first_start.md): the game's and make dist's, and
 # hz_assets's (the extractor from a terminal).
 EXTRACT := $(wildcard src/extract/*.c)
+# (Half B of docs/hackable.md's step 1) The checks' view of the cartridge's video
+# memory: the VDP model and the watcher that lays the draw layer's changes out
+# in it (tools/video_vdp.h). Every tool that runs the game links them; the
+# game does not.
+CART := tools/hz_vdp.c tools/video_vdp.c
 FIRST_START := src/platform/first_start_sdl3.c $(EXTRACT)
 
 # Unpacking an archive keeps its files' dates, which can be older than
@@ -337,7 +342,7 @@ sdl-syntax:
 # SDR crop, and the HDR encodes (sim_check.txt);
 # `./crt_ref crop crt_reference/title.png crt_reference NAME SX SY SW SH`
 # writes crops at display resolution. No GPU needed.
-CRT_CORE := src/core/crt.c src/core/cram.c src/core/hz_vdp.c \
+CRT_CORE := src/core/crt.c src/core/cram.c \
             src/core/png.c src/core/pngwrite.c src/core/hz_file.c \
             src/core/hz_mods.c
 
@@ -461,7 +466,7 @@ hz_headless_q: $(CORE) $(AUDIO) $(GAME) $(NET) src/main.c \
 # INST[,INST]` plays those alone through the chip and through Q; `song SONG
 # SECONDS nuked|q OUT.wav` a song alone through the game's mixer; `model` one
 # drum model's strike.
-hz_qdrums: $(CORE) $(AUDIO) $(GAME) tools/hz_qdrums.c $(HDRS) $(Q_OBJ)
+hz_qdrums: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_qdrums.c $(HDRS) $(Q_OBJ)
 	$(CC) $(CFLAGS) -DHZ_HAVE_Q -o $@ $(CORE) $(AUDIO) $(GAME) \
 	    tools/hz_qdrums.c $(Q_OBJ) $(Q_LDLIBS) $(LDLIBS)
 
@@ -481,23 +486,23 @@ build/q/q_hz.o: src/audio/q/q_hz.c src/audio/q/q_ps2.h
 	@mkdir -p build/q
 	$(CC) $(CFLAGS) -c -o $@ src/audio/q/q_hz.c
 
-hz_shot: $(CORE) $(AUDIO) $(GAME) tools/hz_shot.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_shot.c $(LDLIBS)
+hz_shot: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_shot.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_shot.c $(LDLIBS)
 
-hz_loop: $(CORE) $(AUDIO) $(GAME) tools/hz_loop.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_loop.c $(LDLIBS)
+hz_loop: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_loop.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_loop.c $(LDLIBS)
 
-hz_mech: $(CORE) $(AUDIO) $(GAME) tools/hz_mech.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_mech.c $(LDLIBS)
+hz_mech: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_mech.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_mech.c $(LDLIBS)
 
-hz_hud: $(CORE) $(AUDIO) $(GAME) tools/hz_hud.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_hud.c $(LDLIBS)
+hz_hud: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_hud.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_hud.c $(LDLIBS)
 
-hz_anim: $(CORE) $(AUDIO) $(GAME) tools/hz_anim.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_anim.c $(LDLIBS)
+hz_anim: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_anim.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_anim.c $(LDLIBS)
 
-hz_shots: $(CORE) $(AUDIO) $(GAME) tools/hz_shots.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_shots.c $(LDLIBS)
+hz_shots: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_shots.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_shots.c $(LDLIBS)
 
 # A chip-write log (tools/z80run.py --log) through Nuked-OPN2 and the PSG.
 hz_audiolog: tools/hz_audiolog.c src/audio/ym3438.c src/audio/ym3438.h \
@@ -505,36 +510,36 @@ hz_audiolog: tools/hz_audiolog.c src/audio/ym3438.c src/audio/ym3438.h \
 	$(CC) $(CFLAGS) -o $@ tools/hz_audiolog.c src/audio/ym3438.c \
 	    src/core/psg.c -lm
 
-hz_unitmove: $(CORE) $(AUDIO) $(GAME) tools/hz_unitmove.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_unitmove.c $(LDLIBS)
+hz_unitmove: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_unitmove.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_unitmove.c $(LDLIBS)
 
-hz_unitai: $(CORE) $(AUDIO) $(GAME) tools/hz_unitai.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_unitai.c $(LDLIBS)
+hz_unitai: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_unitai.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_unitai.c $(LDLIBS)
 
-hz_ordermenu: $(CORE) $(AUDIO) $(GAME) tools/hz_ordermenu.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_ordermenu.c $(LDLIBS)
+hz_ordermenu: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_ordermenu.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_ordermenu.c $(LDLIBS)
 
-hz_front: $(CORE) $(AUDIO) $(GAME) tools/hz_front.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_front.c $(LDLIBS)
+hz_front: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_front.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_front.c $(LDLIBS)
 
-hz_gameend: $(CORE) $(AUDIO) $(GAME) tools/hz_gameend.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_gameend.c $(LDLIBS)
+hz_gameend: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_gameend.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_gameend.c $(LDLIBS)
 
-hz_demo: $(CORE) $(AUDIO) $(GAME) tools/hz_demo.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_demo.c $(LDLIBS)
+hz_demo: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_demo.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_demo.c $(LDLIBS)
 
-hz_netcheck: $(CORE) $(AUDIO) $(GAME) tools/hz_netcheck.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_netcheck.c $(LDLIBS)
+hz_netcheck: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_netcheck.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_netcheck.c $(LDLIBS)
 
-hz_arena: $(CORE) $(AUDIO) $(GAME) tools/hz_arena.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_arena.c $(LDLIBS)
+hz_arena: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_arena.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_arena.c $(LDLIBS)
 
 # (Session 72) The REPAIR patch's scenes (tools/hz_repair.c, docs/repair.md):
 # a repair truck and its mechanics on open ground, each scene checked for
 # what must happen, with the patch alone, with UNITS and with PATHS too.
 # No ROM.
-hz_repair: $(CORE) $(AUDIO) $(GAME) tools/hz_repair.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_repair.c $(LDLIBS)
+hz_repair: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_repair.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_repair.c $(LDLIBS)
 
 repair: hz_repair
 	./hz_repair "$(ASSETS)"
@@ -555,32 +560,32 @@ NM_OLD_NAMES := -Dnightmare_think=nightmare_old_think \
                 -Dnightmare_copy=nightmare_old_copy \
                 -Dnightmare_think_ahead=nightmare_old_think_ahead \
                 -Dnightmare_ahead_copy=nightmare_old_ahead_copy
-hz_arena_ab: $(CORE) $(AUDIO) $(GAME) tools/hz_arena.c $(HDRS) $(OLD)
+hz_arena_ab: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_arena.c $(HDRS) $(OLD)
 	@test -n "$(OLD)" || { echo "make hz_arena_ab OLD=path/to/nightmare.c"; exit 1; }
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(NM_OLD_NAMES) -Isrc/game -c -o build/nightmare_old.o $(OLD)
-	$(CC) $(CFLAGS) -DHZ_ARENA_OLD_BRAIN -o $@ $(CORE) $(AUDIO) $(GAME) \
+	$(CC) $(CFLAGS) -DHZ_ARENA_OLD_BRAIN -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) \
 	    tools/hz_arena.c build/nightmare_old.o $(LDLIBS)
 
-hz_mechai: $(CORE) $(AUDIO) $(GAME) tools/hz_mechai.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_mechai.c $(LDLIBS)
+hz_mechai: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_mechai.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_mechai.c $(LDLIBS)
 
-hz_rumble: $(CORE) $(AUDIO) $(GAME) tools/hz_rumble.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_rumble.c $(LDLIBS)
+hz_rumble: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_rumble.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_rumble.c $(LDLIBS)
 
 # (Session 54) The controls on their own (src/core/keys.c).
 hz_controls: src/core/keys.c src/core/keys.h src/core/hz_types.h tools/hz_controls.c
 	$(CC) $(CFLAGS) -o $@ src/core/keys.c tools/hz_controls.c
 
 # The C port of the Z80 driver on z80run.py's scripts (make sound).
-hz_sound: $(CORE) $(AUDIO) $(GAME) tools/hz_sound.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_sound.c $(LDLIBS)
+hz_sound: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_sound.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_sound.c $(LDLIBS)
 
 hz_ymchan: $(CORE) $(AUDIO) tools/hz_ymchan.c $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) tools/hz_ymchan.c $(LDLIBS)
 
-hz_roundtrip: $(CORE) $(AUDIO) $(GAME) tools/hz_roundtrip.c $(HDRS)
-	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) tools/hz_roundtrip.c $(LDLIBS)
+hz_roundtrip: $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_roundtrip.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(CORE) $(AUDIO) $(GAME) $(CART) tools/hz_roundtrip.c $(LDLIBS)
 
 hz_unpack: tools/hz_unpack.c src/core/hz_lzw.c src/core/hz_rle.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
@@ -630,8 +635,8 @@ hz_assets: $(CORE) $(AUDIO) $(EXTRACT) tools/hz_assets.c $(HDRS)
 	    $(LDLIBS)
 
 # (Session 78) The network game's id of assets folders: ./hz_gameid DIR...
-hz_gameid: tools/hz_gameid.c $(CORE) $(AUDIO) $(GAME) $(NET) $(HDRS)
-	$(CC) $(CFLAGS) -o $@ tools/hz_gameid.c $(CORE) $(AUDIO) $(GAME) \
+hz_gameid: tools/hz_gameid.c $(CORE) $(AUDIO) $(GAME) $(CART) $(NET) $(HDRS)
+	$(CC) $(CFLAGS) -o $@ tools/hz_gameid.c $(CORE) $(AUDIO) $(GAME) $(CART) \
 	    $(NET) $(LDLIBS)
 
 # src/extract/rom_map.h again from hz.sym, after `make rom` moved a label.
@@ -870,8 +875,8 @@ hz_netai: server/hz_netai.c $(CORE) $(AUDIO) $(GAME) $(NET) $(HDRS)
 # (Session 59) Recorded games (src/game/replay.h: the game writes one to
 # saves/replays/ as each ends) played again with no window, checked
 # against their hashes, and looked at: what each side did.
-hz_replay: tools/hz_replay.c $(CORE) $(AUDIO) $(GAME) $(NET) $(HDRS)
-	$(CC) $(CFLAGS) -o $@ tools/hz_replay.c $(CORE) $(AUDIO) $(GAME) \
+hz_replay: tools/hz_replay.c $(CORE) $(AUDIO) $(GAME) $(CART) $(NET) $(HDRS)
+	$(CC) $(CFLAGS) -o $@ tools/hz_replay.c $(CORE) $(AUDIO) $(GAME) $(CART) \
 	    $(NET) $(LDLIBS)
 
 # (Session 56) Players without the game, for the server and the lockstep:

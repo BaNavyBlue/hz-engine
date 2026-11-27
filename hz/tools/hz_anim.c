@@ -38,7 +38,7 @@
  *                         CRC-32s (zlib's) of all of VRAM and of the 64
  *                         CRAM words as big-endian bytes */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/game.h"
 
 #include <stdio.h>
@@ -82,6 +82,11 @@ static u32 crc32_bytes(const u8 *p, size_t n)
     }
     return ~crc;
 }
+
+/* (Half B of docs/hackable.md's step 1) The cartridge's VRAM, laid out
+ * from the draw layer's changes by tools/video_vdp.c. */
+static VideoVdp g_cart;
+static Video g_video;
 
 static u32 cram_crc(const Vdp *v)
 {
@@ -233,8 +238,10 @@ int main(int argc, char **argv)
     fprintf(f, "HZA1 %X %X %X\n", runs, passes, seed);
 
     for (int run = 0; run < runs; run++) {
+        video_init(&g_video);
         vdp_reset(&vdp);
-        game_init(g, &assets, &vdp);
+        video_vdp_watch(&g_cart, &g_video, &vdp);
+        game_init(g, &assets, &g_video);
         u32 fill = rng_next() & 0xFFFF;
         for (u32 i = 0; i < VDP_VRAM_SIZE; i++) {
             vdp.vram[i] = (u8)((i * 0x9E3779B1u + fill * 0x9E37u) >> 24);

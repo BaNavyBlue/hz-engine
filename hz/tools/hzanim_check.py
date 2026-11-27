@@ -40,6 +40,11 @@ Anim is also the model tools/hzview_check.py and tools/hzloop_check.py
 carry through their frames (Anim.from_rom: a map as Game_LoadMap and
 Map_InitAnimTiles leave it).
 
+(Session 79) Register 15 is left out of the comparison: the port draws
+through the draw layer (src/core/video.h, docs/hackable.md), which writes
+no VDP data port, so it has no auto-increment to leave at 2. Register 1
+is still compared: the screen stays off.
+
   hzanim_check.py ROM LOG
 """
 
@@ -264,11 +269,12 @@ def check(rom, path):
                                     "%X" % a.cram_crc())
             names = ("steps", "shown", "cyc0", "cyc1", "reg1", "reg15",
                      "vram", "cram")
-            for name, g, w in zip(names, e[1:], want):
-                if g != w:
-                    errors.append("run %d pass %d: %s %s, model %s"
-                                  % (run, passes, name, g, w))
-            if any(g != w for g, w in zip(e[1:], want)):
+            bad = [(name, g, w) for name, g, w in zip(names, e[1:], want)
+                   if g != w and name != "reg15"]
+            for name, g, w in bad:
+                errors.append("run %d pass %d: %s %s, model %s"
+                              % (run, passes, name, g, w))
+            if bad:
                 # carry on from the port's state, so one fault is one error
                 a.step = [int(e[1][k:k + 2], 16) for k in range(0, 64, 2)]
                 a.shown = [int(e[2][k:k + 4], 16) for k in range(0, 128, 4)]

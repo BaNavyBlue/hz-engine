@@ -22,9 +22,9 @@
  * player's pad is, and its memory (HzGame.nightmare[side]) is kept.
  * Nothing in a two-player game reads that memory, and the AI writes
  * nothing else, so this game and the person's stay the same (the state
- * hash every second says so). The raster writes vdp_render applies on
- * the person's machine are applied here without drawing
- * (vdp_apply_rasters).
+ * hash every second says so). Nothing is drawn here: the draw layer
+ * keeps what the person's machine's shows (its frame is composed only to
+ * be seen), so the display's part of the hash is alike.
  *
  * (Session 64) Its delay is what the person's leaves of the round trip
  * and 4 frames (net_game_push): a person from session 64 on plays with
@@ -55,7 +55,7 @@
 
 #include "../src/core/hz_file.h"
 #include "../src/core/hz_mods.h"
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/nightmare.h"
 #include "../src/game/replay.h"
@@ -154,7 +154,6 @@ static void on_frame(HzGame *g, void *user)
     if (g->quit) {
         return;
     }
-    vdp_apply_rasters(g->vdp);
     if (b->end_at > 0 && c->frame == (u32)b->end_at) {
         for (int p = 0; p < 2; p++) {           /* (session 66) a check's */
             if (b->end_who & (1 << p)) {
@@ -266,11 +265,11 @@ static bool music_on(void *user)
  * session 64); it thinks ahead by it (think). Before session 64 it kept
  * one frame and thought on the frame as it was: at three it overshot its
  * landings and ran out of fuel carrying. */
-static void play(Bot *b, HzGame *g, Vdp *vdp, const HzAssets *assets)
+static void play(Bot *b, HzGame *g, Video *video, const HzAssets *assets)
 {
     NetClient *c = &b->net;
-    vdp_reset(vdp);
-    game_init(g, assets, vdp);
+    video_init(video);
+    game_init(g, assets, video);
     g->frame = on_frame;
     g->frame_user = b;
     g->snd_music_on = music_on;
@@ -437,7 +436,7 @@ int main(int argc, char **argv)
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     NetClient *c = &b->net;
     net_client_init(c);
@@ -469,7 +468,7 @@ int main(int argc, char **argv)
             net_client_host(c, &any);   /* its round trip told, measured */
         }
         if (net_client_take_start(c)) {
-            play(b, &game, &vdp, &assets);
+            play(b, &game, &video, &assets);
             continue;
         }
         if (c->sock != NET_NO_SOCK) {

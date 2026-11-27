@@ -15,12 +15,12 @@ static void begin_upload(HzGame *g)
 {
     game_wait_vblank(g);
     g->split_done = 2;
-    vdp_reg(g->vdp, 0x8124);
+    video_display(g->video, false);
 }
 
 static void end_upload(HzGame *g)
 {
-    vdp_reg(g->vdp, 0x8164);
+    video_display(g->video, true);
     g->split_done = 0;
 }
 
@@ -78,8 +78,8 @@ static void mech_to_jet(HzGame *g, HzMech *m, HzPoint *cam)
 }
 
 /* GameOver_ResetViews ($917E): both mechs as jets; with the display off,
- * plane A's scroll 0 and flushed, the four nametables cleared ($C000,
- * $C800, $E000, $E800: 2 KB each) and the views drawn again. */
+ * the views' scroll 0 and flushed, layers A and B cleared (on the 68k
+ * four 2 KB fills) and the views drawn again. */
 static void reset_views(HzGame *g)
 {
     mech_to_jet(g, &g->mech[0], &g->camera[0]);
@@ -90,13 +90,8 @@ static void reset_views(HzGame *g)
     g->scroll_y[0] = 0;
     g->scroll_y[1] = 0;
     map_flush_scroll(g);
-    static const u16 TABLES[4] = { 0xC000, 0xC800, 0xE000, 0xE800 };
-    for (int i = 0; i < 4; i++) {
-        vdp_set_write(g->vdp, VDP_VRAM, TABLES[i]);
-        for (int w = 0; w < 0x400; w++) {
-            vdp_write16(g->vdp, 0);
-        }
-    }
+    video_fill(g->video, LAYER_A, cell_from_word(0));   /* both views clear */
+    video_fill(g->video, LAYER_B, cell_from_word(0));
     map_draw_views(g);
     game_display_on(g);
 }
@@ -114,7 +109,7 @@ static void clear_units(HzGame *g)
     sprites_build(g);
     sprites_multiplex(g);
     begin_upload(g);
-    vdp_upload_sprites(g);
+    sprites_upload(g);
     end_upload(g);
 }
 
@@ -190,10 +185,7 @@ static void palette_fade_out_step(HzGame *g)
         }
         g->map_palette[i] = c;
     }
-    vdp_command(g->vdp, 0xC0000000);
-    for (int i = 0; i < 16; i++) {
-        vdp_write16(g->vdp, g->map_palette[i]);
-    }
+    video_set_colours(g->video, 0, g->map_palette, 16);
 }
 
 /* The shake's state: the scroll shaken (0 plane A, 1 plane B, (session
@@ -237,7 +229,7 @@ static void shake_frame(HzGame *g, Shake *s)
     map_flush_scroll(g);
     end_upload(g);
     begin_upload(g);
-    vdp_upload_sprites(g);
+    sprites_upload(g);
     if ((s->frames & 7) == 0) {
         palette_fade_out_step(g);
     }

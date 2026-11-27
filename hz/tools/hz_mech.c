@@ -51,7 +51,7 @@
  * Combat_Update a "J" line (before) and a "K" line (after): the state, the
  * shots and a CRC of the units (combat_probe). */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 
@@ -675,10 +675,10 @@ int main(int argc, char **argv)
     if (log.f == NULL) {
         return 1;
     }
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
-    vdp_reset(&vdp);
-    game_init(&game, &assets, &vdp);
+    video_init(&video);
+    game_init(&game, &assets, &video);
     game.frame = on_frame;
     game.options[0] = (u8)mode;
     game.options[1] = (u8)difficulty;

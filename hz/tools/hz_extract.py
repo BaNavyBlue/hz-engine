@@ -56,7 +56,7 @@ PACK_TABLES = {
     'pack_forest': 0x57800,      # 1 x $8C00: the endings' forest painting
 }
 
-# Measured VA4 DAC levels (the PS2 port's, and hz_vdp.c's).
+# Measured VA4 DAC levels (the PS2 port's, and src/core/cram.c's).
 DAC = [0, 52, 87, 116, 144, 172, 206, 255]
 
 # Sprite sheets: the groups of tiles that make known pictures, as

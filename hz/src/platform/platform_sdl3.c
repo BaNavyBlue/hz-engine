@@ -1327,7 +1327,7 @@ static bool present_gpu(Platform *p, const u8 *indices, const u16 *cram,
 {
     Cram palette[FB_INDICES];
     for (int i = 0; i < FB_INDICES; i++) {
-        if (i < VDP_CRAM_WORDS) {
+        if (i < VIDEO_COLOURS) {
             palette[i] = cram[i];
         } else {
             palette[i] = (overlay != NULL) ? overlay[i - OVERLAY_BASE] : 0;
@@ -1335,7 +1335,7 @@ static bool present_gpu(Platform *p, const u8 *indices, const u16 *cram,
     }
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
         u8 v = indices[i];
-        p->frame[i] = (v < FB_INDICES) ? v : (u8)(v & (VDP_CRAM_WORDS - 1));
+        p->frame[i] = (v < FB_INDICES) ? v : (u8)(v & (VIDEO_COLOURS - 1));
     }
     gpu_follow_hdr(p);
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(p->gpu);
@@ -1382,19 +1382,19 @@ static void present_renderer(Platform *p, const u8 *indices,
     u32 lut[OVERLAY_BASE + OVERLAY_COLOURS];
     for (int i = 0; i < OVERLAY_BASE + OVERLAY_COLOURS; i++) {
         u16 word = 0;
-        if (i < VDP_CRAM_WORDS) {
+        if (i < VIDEO_COLOURS) {
             word = cram[i];
         } else if (overlay != NULL) {
             word = overlay[i - OVERLAY_BASE];
         }
         u8 rgb[3];
-        vdp_cram_rgb(word, rgb);
+        cram_rgb(word, rgb);
         lut[i] = ((u32)rgb[0] << 16) | ((u32)rgb[1] << 8) | (u32)rgb[2];
     }
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
         u8 v = indices[i];
         p->pixels[i] = lut[(v < OVERLAY_BASE + OVERLAY_COLOURS)
-                           ? v : (v & (VDP_CRAM_WORDS - 1))];
+                           ? v : (v & (VIDEO_COLOURS - 1))];
     }
     SDL_UpdateTexture(p->texture, NULL, p->pixels,
                       SCREEN_W * (int)sizeof(u32));

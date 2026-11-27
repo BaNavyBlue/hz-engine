@@ -56,6 +56,7 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import hzlayer                                          # noqa: E402
 import m68krun                                          # noqa: E402
 from hzordermenu_check import Vdp                       # noqa: E402
 
@@ -147,14 +148,16 @@ class Cpu(m68krun.M68k):
     def frame(self):
         v = self.vdp
         vs = b''.join(w.to_bytes(2, 'big') for w in v.vsram)
-        self.frames.append('%08X %s %08X %s' % (
-            zlib.crc32(bytes(v.vram)) & 0xFFFFFFFF,
+        cut = hzlayer.link5(v.vram, v.regs[5]) == 0     # (no HBlank here)
+        self.frames.append('%08X %s %08X %s %08X' % (
+            v.held.crc(v.vram),
             ''.join('%03X' % (c & 0x0EEE) for c in v.cram),
             zlib.crc32(vs) & 0xFFFFFFFF,
-            ''.join('%02X' % r for r in v.regs)))
+            ''.join('%02X' % r for r in v.regs),
+            hzlayer.sprites_crc(v.vram, v.regs[5], cut)))
         k = len(self.frames) - 1
         if self.script.get('dump') == k:
-            self.dump = bytes(v.vram)
+            self.dump = bytes(v.held.vram(v.vram))
         self.pads = self.script['pads'][k] if k < len(
             self.script['pads']) else 0
         if len(self.frames) >= len(self.script['pads']):
@@ -434,7 +437,8 @@ def first_vram_diff(hz_front, assets, script_path, frame, theirs):
 
 def describe_frame(ours, theirs):
     o, t = ours.split(), theirs.split()
-    names = ['VRAM CRC', 'CRAM', 'VSRAM CRC', 'registers']
+    names = ['VRAM CRC', 'CRAM', 'VSRAM CRC', 'registers',
+             'sprites as drawn']
     out = []
     for i, n in enumerate(names):
         if o[i] != t[i]:

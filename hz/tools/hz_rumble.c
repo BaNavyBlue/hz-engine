@@ -57,7 +57,7 @@
  * (tools/hzmenu_check.py compares the two), and before the summary the
  * felt counts side by side ("side S: kind N ..."). */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/rumble.h"
 
@@ -449,11 +449,11 @@ int main(int argc, char **argv)
     }
     rumble_reset(&r->rumble);
 
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     HzGame *g = &game;
-    vdp_reset(&vdp);
-    game_init(g, &assets, &vdp);
+    video_init(&video);
+    game_init(g, &assets, &video);
     g->frame = on_frame;
     g->frame_user = r;
     g->snd_music_on = music_on;

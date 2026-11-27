@@ -80,33 +80,36 @@ void map_anim_tiles_update(HzGame *g)
 /* Map_AnimTilesUpload ($5812), from Game_FrameLoop after VDP_WaitVBlank,
  * with the display off (after Map_FlushScroll and OrderMenu_UpdateBoth),
  * on the same frames. Each queued job in order: the record's own picture
- * written into its slot, or the tile copied there (a VRAM copy DMA of 32
- * bytes). The 68k leaves the VDP with DMA off and the auto-increment at
- * 2 (register 1 $24: the display stays off). Then each colour cycle's
- * counter + 1, and its ColourCycles colour (& $F) to its CRAM entry
- * (ColourCycleCRAM). */
+ * put back into its tile, or the tile named copied there (on the 68k a
+ * VRAM copy DMA of 32 bytes); the screen stays off. Then each colour
+ * cycle's counter + 1, and its ColourCycles colour (& $F) into its
+ * palette entry (ColourCycleCRAM). */
 void map_anim_tiles_upload(HzGame *g)
 {
     if (!anim_frame(g)) {
         return;
     }
-    Vdp *v = g->vdp;
+    Video *v = g->video;
     for (int r = 0; r < HZ_ANIM_RECORDS; r++) {
         const HzAnimTileJob *job = &g->anim_tile_queue[r];
         if (!job->pending) {
             continue;
         }
+        /* The job keeps the 68k's slot address: the tile is it / 32. */
+        u16 to = (u16)(job->to >> 5);
         if (job->copy) {
-            vdp_copy_vram(v, job->to, tile_vram(job->from), 32);
+            video_copy_tile(v, to, (u16)(tile_vram(job->from) >> 5));
         } else {
-            vdp_put_vram(v, job->to, g->anim_tile_gfx[r], 32);
+            video_load_tiles(v, to, g->anim_tile_gfx[r], 1);
         }
     }
-    vdp_reg(v, 0x8F02);             /* auto-increment 2 */
-    vdp_reg(v, 0x8124);             /* DMA off */
+    video_display(v, false);
     for (int k = 0; k < 2; k++) {
         g->colour_cycle[k] = (u16)(g->colour_cycle[k] + 1);
-        vdp_command(v, COLOUR_CYCLE_CRAM[k]);
-        vdp_write16(v, g->assets->colour_cycles[k][g->colour_cycle[k] & 0x0F]);
+        /* ColourCycleCRAM's commands name the colours by their CRAM
+         * address: line 0's colours 2 and $B. */
+        int entry = (int)((COLOUR_CYCLE_CRAM[k] >> 17) & 0x3F);
+        video_set_colour(v, entry,
+                         g->assets->colour_cycles[k][g->colour_cycle[k] & 0x0F]);
     }
 }

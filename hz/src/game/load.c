@@ -4,48 +4,46 @@
 
 #include <string.h>
 
-static void upload(Vdp *v, u32 cmd, const u8 *src, u32 bytes)
+/* The tiles each part of the game's art goes to. */
+#define TILE_MECH1   0x200          /* P1's mech frame: 16 tiles */
+#define TILE_MECH2   0x210          /* P2's */
+#define TILE_SPRITES 0x240          /* SpriteTiles: $240-$4FF */
+#define TILE_HUD     0x500          /* HUDTiles: $500-$5FF */
+#define TILE_FONT    0x6B1          /* FontTiles: $6B1-$6FF */
+
+static void load_tiles(HzGame *g, u16 first, const u8 *src, u32 bytes)
 {
-    vdp_command(v, cmd);
-    vdp_write_bytes(v, src, bytes);
+    video_load_tiles(g->video, first, src, bytes / 32);
 }
 
-#define MECH_FRAMES_ROM 0x010000u    /* MechFrames: 64 x $200 */
-
-/* LoadScreen_UploadSprites ($8F04): the two loading-screen entries to the
- * sprite table at VRAM $D030, sprites 6 and 7. */
+/* LoadScreen_UploadSprites ($8F04): the two loading-screen entries as
+ * sprites 6 and 7 of the frame's (the table at VRAM $D030 on the
+ * cartridge): after the divider's six, which Screen_InitGame linked to 6,
+ * 6 linking 7 and 7 the end. */
 static void load_upload_sprites(HzGame *g)
 {
-    Vdp *v = g->vdp;
-    vdp_command(v, 0x50300003);
+    HzSprite divider[6];
+    screen_divider(g, divider);
+    video_sprites_begin(g->video);
+    for (int i = 0; i <= 5; i++) {
+        sprites_show_one(g, &divider[i]);
+    }
+    video_sprites_game(g->video);
     for (int i = 0; i < 2; i++) {
-        const HzSprite *s = &g->load_sprites[i];
-        vdp_write32(v, ((u32)s->y << 16) | s->size_link);
-        vdp_write32(v, ((u32)s->attr << 16) | s->x);
+        sprites_show_one(g, &g->load_sprites[i]);
     }
 }
 
 /* LoadScreen_UploadMech ($8F2A): MechFrames frame load_mech_frame (& $7F;
  * no frame past $3F is ever asked for, so the assets' & $3F), 16 tiles,
- * by DMA to VRAM $4000 (P1's mech tiles) and again to $4200 (P2's), with
- * register 1 $34 (DMA on, display off) meanwhile and $24 after. */
+ * into P1's mech tiles and P2's, with the screen off. */
 static void load_upload_mech(HzGame *g)
 {
-    Vdp *v = g->vdp;
     u16 f = (u16)(g->load_mech_frame & 0x7F);
-    u32 s = (MECH_FRAMES_ROM + ((u32)f << 9)) >> 1;
     const u8 *src = g->assets->mech_frames[f & (HZ_MECH_FRAMES - 1)];
-    vdp_reg(v, 0x8134);
-    for (int i = 0; i < 2; i++) {
-        vdp_reg(v, 0x9300);                             /* $100 words */
-        vdp_reg(v, 0x9401);
-        vdp_reg(v, (u16)(0x9500 | (s & 0xFF)));
-        vdp_reg(v, (u16)(0x9600 | ((s >> 8) & 0xFF)));
-        vdp_reg(v, 0x9700);
-        vdp_command(v, i == 0 ? 0x40000081 : 0x42000081);
-        vdp_write_bytes(v, src, HZ_MECH_FRAME_BYTES);
-    }
-    vdp_reg(v, 0x8124);
+    video_display(g->video, false);
+    load_tiles(g, TILE_MECH1, src, HZ_MECH_FRAME_BYTES);
+    load_tiles(g, TILE_MECH2, src, HZ_MECH_FRAME_BYTES);
 }
 
 /* LoadScreen_Start ($8E7A), from Game_LoadMap with the display off and
@@ -99,8 +97,7 @@ void vblank_loading(HzGame *g)
         return;                                         /* .done */
     }
     g->load_busy--;
-    Vdp *v = g->vdp;
-    vdp_reg(v, 0x8124);
+    video_display(g->video, false);
     u16 busy = g->load_busy;
     if (busy >= 0x57) {
         g->load_sprites[0].y--;
@@ -133,7 +130,7 @@ void vblank_loading(HzGame *g)
             g->load_abort = 0xFFFF;
         }
     }
-    vdp_reg(v, 0x8164);                                 /* .display_on */
+    video_display(g->video, true);                     /* .display_on */
 }
 
 /* Game_LoadMap's wait for the loading screen (.wait_load_screen): a frame
@@ -165,7 +162,6 @@ static void load_screen_wait(HzGame *g)
 bool game_load_map(HzGame *g)
 {
     const HzAssets *a = g->assets;
-    Vdp *v = g->vdp;
     if (g->map >= HZ_MAPS) {
         return false;
     }
@@ -175,14 +171,11 @@ bool game_load_map(HzGame *g)
     game_wait_vblank(g);
     g->interrupts_on = false;
     /* .sprite_tiles, .font, .hud_tiles */
-    upload(v, 0x48000001, a->sprite_tiles, sizeof a->sprite_tiles);
-    upload(v, 0x56200003, a->font_tiles, sizeof a->font_tiles);
-    upload(v, 0x60000002, a->hud_tiles, sizeof a->hud_tiles);
+    load_tiles(g, TILE_SPRITES, a->sprite_tiles, sizeof a->sprite_tiles);
+    load_tiles(g, TILE_FONT, a->font_tiles, sizeof a->font_tiles);
+    load_tiles(g, TILE_HUD, a->hud_tiles, sizeof a->hud_tiles);
     game_wait_vblank(g);
-    vdp_command(v, 0xC0200000);                         /* .palettes */
-    for (int i = 0; i < 48; i++) {
-        vdp_write16(v, a->game_palettes[i]);
-    }
+    video_set_colours(g->video, 16, a->game_palettes, 48);   /* .palettes */
     game_display_off(g);
     screen_init_game(g);
     load_screen_start(g);
@@ -206,7 +199,7 @@ bool game_load_map(HzGame *g)
         memcpy(g->map_tiles, m->tiles, sizeof g->map_tiles);
         game_wait_vblank(g);
         g->interrupts_on = false;
-        upload(v, 0x40000000, g->map_tiles, sizeof g->map_tiles);
+        load_tiles(g, 0, g->map_tiles, sizeof g->map_tiles);
         game_unmask(g);                                 /* .map_tiles */
         map_init_anim_tiles(g);
     }
@@ -220,9 +213,8 @@ bool game_load_map(HzGame *g)
     if (!g->load_abort) {
         g->interrupts_on = false;
         game_wait_vblank(g);
-        vdp_command(v, 0xC0000000);                     /* .clear_line0 */
-        for (int i = 0; i < 16; i++) {
-            vdp_write16(v, 0);
+        for (int i = 0; i < 16; i++) {                  /* .clear_line0 */
+            video_set_colour(g->video, i, 0);
         }
     }
     g->interrupts_on = false;                           /* .done */

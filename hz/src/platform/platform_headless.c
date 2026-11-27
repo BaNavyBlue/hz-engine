@@ -459,18 +459,18 @@ void platform_present(Platform *p, const u8 *indices, const u16 *cram,
 {
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
         u8 v = indices[i];
-        u16 word = cram[v & (VDP_CRAM_WORDS - 1)];
+        u16 word = cram[v & (VIDEO_COLOURS - 1)];
         if (v >= OVERLAY_BASE && v < OVERLAY_BASE + OVERLAY_COLOURS) {
             word = (overlay != NULL) ? overlay[v - OVERLAY_BASE] : 0;
         }
-        vdp_cram_rgb(word, p->rgb + i * 3);
+        cram_rgb(word, p->rgb + i * 3);
         p->index[i] = (v < OVERLAY_BASE + OVERLAY_COLOURS)
-                    ? v : (u8)(v & (VDP_CRAM_WORDS - 1));
+                    ? v : (u8)(v & (VIDEO_COLOURS - 1));
     }
     for (int i = 0; i < OVERLAY_BASE + OVERLAY_COLOURS; i++) {
-        u16 word = (i < VDP_CRAM_WORDS) ? cram[i]
+        u16 word = (i < VIDEO_COLOURS) ? cram[i]
                  : ((overlay != NULL) ? overlay[i - OVERLAY_BASE] : 0);
-        vdp_cram_rgb(word, p->plte + i * 3);
+        cram_rgb(word, p->plte + i * 3);
     }
     p->have_frame = true;
     if (p->frames_dir != NULL) {

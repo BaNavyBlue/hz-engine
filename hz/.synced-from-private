@@ -1,2 +1,2 @@
-hz/ is the private port's, as of: The game's own words for its files: --help names the image, and a failed load says to delete data/units.json to have them made again (not make assets)
+hz/ is the private port's, as of: Step 1 of the hackable plan: the game draws through its own draw layer (src/core/video.h), not a VDP model
 Made by tools/sync_private.py; it empties this folder each time.

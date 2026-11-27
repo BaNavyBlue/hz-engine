@@ -26,7 +26,9 @@ commands (code and address); CD5 with DMA enabled (register 1 b4) and
 register 23's mode $80 makes the next data write a fill: (register 19-20)
 + 1 bytes of the value's high byte from the address, stepping by register
 15. Data writes go to VRAM (a word, byte-swapped at an odd address, as
-src/core/hz_vdp.c), CRAM or VSRAM, then the address steps by register 15.
+tools/hz_vdp.c), CRAM or VSRAM, then the address steps by register 15.
+Which VRAM bytes are a sprite table's is kept too (tools/hzlayer.py: the
+front's and the game end's checks leave them out).
 Reading the control port gives 0 (no DMA running). The RAM routine
 v_dma_trigger ($FFF8F2: move.w #v_dma_word,(a6) / rts) is run as what it
 does.
@@ -40,6 +42,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import hzlayer                                          # noqa: E402
 import m68krun                                          # noqa: E402
 
 RAM_SIZE = 0x10000
@@ -61,6 +64,7 @@ class Vdp:
         self.code = 1
         self.addr = 0
         self.fill = False
+        self.held = hzlayer.Held(self.regs[5])
 
     def control(self, w):
         if self.pending is not None:
@@ -79,6 +83,8 @@ class Vdp:
             r = (w >> 8) & 0x1F
             if r < 24:
                 self.regs[r] = w & 0xFF
+                if r == 5:
+                    self.held.table(w & 0xFF)
             return
         self.pending = w
 
@@ -91,6 +97,7 @@ class Vdp:
             a = self.addr
             for _ in range(n + 1):
                 self.vram[a & 0xFFFF] = (w >> 8) & 0xFF
+                self.held.wrote(a & 0xFFFF)
                 a += inc if inc else 1
             self.addr = a & 0xFFFF
             return
@@ -108,6 +115,8 @@ class Vdp:
             a &= 0xFFFE
             self.vram[a] = w >> 8
             self.vram[a + 1] = w & 0xFF
+            self.held.wrote(a)
+            self.held.wrote(a + 1)
         self.addr = (self.addr + inc) & 0xFFFF
 
 

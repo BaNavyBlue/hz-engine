@@ -119,7 +119,7 @@
  * after the first of what they could hold (missiles, ammo, HP): its
  * SUPPLY's and repair truck's work. */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/core/pngwrite.h"
 #include "../src/game/game.h"
 #include "../src/game/nightmare.h"
@@ -627,9 +627,9 @@ static void write_png(HzGame *g, const char *prefix, int f)
 {
     static u8 idx[SCREEN_W * SCREEN_H];
     static u8 rgb[SCREEN_W * SCREEN_H * 3];
-    vdp_render(g->vdp, idx);
+    video_compose(g->video, idx);
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        vdp_cram_rgb(g->vdp->cram[idx[i] & 63], rgb + i * 3);
+        cram_rgb(g->video->colours[idx[i] & 63], rgb + i * 3);
     }
     char path[512];
     snprintf(path, sizeof path, "%s_%d.png", prefix, f);
@@ -1140,11 +1140,11 @@ static void info(const HzAssets *as)
     }
     printf("\n");
 
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     for (int map = 0; map < HZ_MAPS; map++) {
-        vdp_reset(&vdp);
-        game_init(&game, as, &vdp);
+        video_init(&video);
+        game_init(&game, as, &video);
         game.hw_version = 0xA0;
         game.options[0] = 1;
         game.options[1] = 0;
@@ -1455,12 +1455,12 @@ int main(int argc, char **argv)
         }
     }
 
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     HzGame *g = &game;
     for (int n = 0; n < games; n++) {
-        vdp_reset(&vdp);
-        game_init(g, &assets, &vdp);
+        video_init(&video);
+        game_init(g, &assets, &video);
         g->frame = on_frame;
         g->frame_user = a;
         g->mech_probe = on_mech;

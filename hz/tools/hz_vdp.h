@@ -1,30 +1,20 @@
 #ifndef HZ_VDP_H
 #define HZ_VDP_H
 
-#include "hz_types.h"
+#include "../src/core/video.h"
 
-/* A model of the Mega Drive VDP at the level Herzog Zwei programs it: VRAM,
- * CRAM, VSRAM and the registers, written through a data port with the
- * VDP's auto-increment, and a renderer that reads them as the chip does.
- *
- * This is a deliberate departure from the PS2 port's video layer, which is
- * semantic (game code says what to draw; no VRAM addresses). Herzog Zwei's
- * screen is built from VDP tricks rather than drawn: the split screen is
- * the window plane over plane A plus a fixed H scroll offset on plane B,
- * the divider is six sprites, the HUD strip hides game sprites by cutting
- * sprite 5's link until an HBlank interrupt at line 30 puts it back, and
- * the scroll code streams nametable words with VDP commands it keeps in
- * RAM queues. Ported as VRAM writes, each of those stays a line-for-line
- * port, quirks included. What is kept from the PS2 renderer: the layer
- * order, the wrap arithmetic, column-major sprite tiles, the VA4 DAC
- * ladder and the PNG writer.
+/* (A test tool since half B of docs/hackable.md's step 1; nothing in the
+ * game links it.) A model of the Mega Drive VDP at the level Herzog Zwei
+ * programs it: VRAM, CRAM, VSRAM and the registers, written through a
+ * data port with the VDP's auto-increment, and a renderer that reads them
+ * as the chip does. The game drew through it from session 10 to session
+ * 79; it draws through src/core/video.h now, and the checks against the
+ * original see the cartridge's VRAM through tools/video_vdp.c, which lays
+ * the layer's changes out in a Vdp as the 68k's writes did.
  *
  * Only what the game uses is modelled: mode 5, H40, no interlace, no
  * shadow/highlight. DMA is modelled by what it leaves in memory (fills and
  * copies happen at once); its timing is not. */
-
-#define SCREEN_W 320
-#define SCREEN_H 224
 
 #define VDP_VRAM_SIZE    0x10000u
 #define VDP_CRAM_WORDS   64

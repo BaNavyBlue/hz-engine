@@ -33,7 +33,7 @@
  * --png: the screen every N frames, PREFIX_SCENE_FRAME.png (P1's jet is
  * flown over the scene first). */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/core/pngwrite.h"
 #include "../src/game/game.h"
 
@@ -111,9 +111,9 @@ static void write_png(const Run *r, const char *name)
     static u8 idx[SCREEN_W * SCREEN_H];
     static u8 rgb[SCREEN_W * SCREEN_H * 3];
     HzGame *g = r->g;
-    vdp_render(g->vdp, idx);
+    video_compose(g->video, idx);
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        vdp_cram_rgb(g->vdp->cram[idx[i] & 63], rgb + i * 3);
+        cram_rgb(g->video->colours[idx[i] & 63], rgb + i * 3);
     }
     char path[512];
     if (name != NULL) {
@@ -221,11 +221,11 @@ static bool find_ground(Run *r, int w, int h)
     return best >= 0;
 }
 
-static bool start(Run *r, HzGame *g, Vdp *vdp, const HzAssets *as, int map,
+static bool start(Run *r, HzGame *g, Video *video, const HzAssets *as, int map,
                   u32 fixes)
 {
-    vdp_reset(vdp);
-    game_init(g, as, vdp);
+    video_init(video);
+    game_init(g, as, video);
     r->g = g;
     r->frames = 0;
     r->fly = r->fly_always;
@@ -888,7 +888,7 @@ int main(int argc, char **argv)
         HZ_FIX_DEFAULT | HZ_FIX_REPAIR | HZ_FIX_UNITS | HZ_FIX_PATHS,
         HZ_FIX_DEFAULT
     };
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     int failed = 0;
     int played = 0;
@@ -906,7 +906,7 @@ int main(int argc, char **argv)
                 continue;       /* without the patch: only what is sold */
             }
             r->scene = SCENES[k].name;
-            if (!start(r, &game, &vdp, &assets, map, fixes)) {
+            if (!start(r, &game, &video, &assets, map, fixes)) {
                 return 1;
             }
             played++;

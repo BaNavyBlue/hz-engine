@@ -4,7 +4,7 @@
 #include "../core/hz_types.h"
 #include "../core/audio.h"
 #include "../core/crt.h"
-#include "../core/hz_vdp.h"
+#include "../core/video.h"
 #include "../core/keys.h"
 #include "../extract/extract.h"
 
@@ -12,8 +12,9 @@
  * PS2 port, whose platform layer this follows). The core and game layers
  * include no platform headers, so the game builds and runs headless.
  *
- * What differs from PS2's: the frame is the VDP model's output (palette
- * indices 0-63 and the 64 CRAM words), and the input is two controllers'
+ * What differs from PS2's: the frame is the draw layer's (video_compose:
+ * palette indices 0-63 and the 64 colours, no colour plane yet), and the
+ * input is two controllers'
  * worth -- the keyboard and up to two gamepads, handed over as they are;
  * which player each drives is main.c's choice, since it depends on the
  * game mode. The sound is src/core/audio.c's, which the platform only

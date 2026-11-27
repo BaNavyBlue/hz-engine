@@ -19,16 +19,15 @@
 
 #include "front.h"
 
-/* VRAM, as Ending_Run lays it out. */
-#define STORY_FONT_VRAM 0x0000      /* a character c is tile c - $30 */
-#define ENDE_VRAM       0x1000      /* tiles $80-$BF */
-#define PICTURE_VRAM    0x2000      /* tiles $100-$55F */
+/* The tiles, as Ending_Run lays them out. */
+#define STORY_FONT_TILE 0x000       /* a character c is tile c - $30 */
+#define ENDE_TILE       0x080       /* tiles $80-$BF */
+#define PICTURE_TILE    0x100       /* tiles $100-$55F */
 #define PICTURE_CELL    0x6100      /* palette 3, tile $100 */
 #define ENDE_CELL       0xC080      /* priority, palette 2, tile $80 */
 #define BLANK_CELL      0x0010      /* the story font's blank, palette 0 */
 
-/* Plane B's rows and where the text goes in them. */
-#define PLANE_ROWS      32
+/* Where the text goes in layer B's rows. */
 #define FIRST_ROW       29          /* below the screen (rows 0-27 show) */
 #define STORY_X         2
 #define STAFF_X         12
@@ -59,9 +58,9 @@ static void print_b(HzGame *g, int x, int y, const u8 *codes, int n)
 {
     HzFront *f = &g->front;
     front_cursor(g, x, y);
-    front_vram_at(g, (u16)(FRONT_PLANE_B + ((y << 6) + x) * 2));
     for (int i = 0; i < n; i++) {
-        vdp_write16(g->vdp, (u16)(codes[i] - 0x30 + f->text_attr));
+        front_put(g, LAYER_B, f->cursor_x, y,
+                  (u16)(codes[i] - 0x30 + f->text_attr));
         f->cursor_x++;
     }
 }
@@ -93,16 +92,10 @@ static void scroll_row(HzGame *g, int frames)
     }
 }
 
-/* A picture at PICTURE_VRAM on the window: 28 rows of 40 cells. */
+/* A picture from PICTURE_TILE on the window: 28 rows of 40 cells. */
 static void draw_picture(HzGame *g)
 {
-    u16 cell = PICTURE_CELL;
-    for (int row = 0; row < 28; row++) {
-        front_vram_at(g, (u16)(FRONT_WINDOW + row * 0x80));
-        for (int col = 0; col < 40; col++) {
-            vdp_write16(g->vdp, cell++);
-        }
-    }
+    front_picture(g, LAYER_W, 0, 0, PICTURE_CELL, 40, 28);
 }
 
 /* Ending_ShowPicture ($537E4): the still life, or the grave when the
@@ -115,7 +108,7 @@ static void show_picture(HzGame *g)
     const HzEndingAssets *e = &g->assets->ending;
     HzFront *f = &g->front;
     int n = (sides(g) == 2) ? 1 : 0;
-    front_vram_bytes(g, PICTURE_VRAM, e->pictures[n], sizeof e->pictures[n]);
+    front_tiles(g, PICTURE_TILE, e->pictures[n], sizeof e->pictures[n]);
     for (int i = 0; i < 16; i++) {
         f->target[48 + i] = e->picture_palettes[n][i];
         f->palette[48 + i] = 0;
@@ -164,7 +157,7 @@ static void scroll_story(HzGame *g)
     }
 }
 
-/* Ending_ShowForest ($535E6): the forest painting (in VRAM already) on
+/* Ending_ShowForest ($535E6): the forest painting (its tiles in already) on
  * the window; every colour black; the targets: line 3 the forest's, line
  * 2 the text palette (ENDE's colours), colour 15 of line 0 yellow (the
  * names) and of line 1 red (the headings); faded in. The rest of lines 0
@@ -228,17 +221,10 @@ static void staff_roll(HzGame *g)
     staff_blank_rows(g, row, 32);
 }
 
-/* ENDE on plane B at (12, 12): 4 rows of 16 cells, palette 2. */
+/* ENDE on layer B at (12, 12): 4 rows of 16 cells, palette 2. */
 static void draw_ende(HzGame *g)
 {
-    u16 cell = ENDE_CELL;
-    for (int row = 0; row < 4; row++) {
-        front_vram_at(g, (u16)(FRONT_PLANE_B + ((ENDE_Y + row) * 64 + ENDE_X)
-                               * 2));
-        for (int col = 0; col < 16; col++) {
-            vdp_write16(g->vdp, cell++);
-        }
-    }
+    front_picture(g, LAYER_B, ENDE_X, ENDE_Y, ENDE_CELL, 16, 4);
 }
 
 /* Ending_Run ($536AC). The story: the story font in, text in palette 0;
@@ -257,8 +243,7 @@ void ending_run(HzGame *g)
     front_clear_sprites(g);
     front_display_off(g);
     front_clear_planes(g);
-    front_vram_bytes(g, STORY_FONT_VRAM, e->story_font,
-                     sizeof e->story_font);
+    front_tiles(g, STORY_FONT_TILE, e->story_font, sizeof e->story_font);
     front_text_font(g, 0);
     front_text_palette(g, 0);
     front_display_on(g);
@@ -267,13 +252,14 @@ void ending_run(HzGame *g)
     scroll_story(g);
     front_fade_to_black(g);
 
-    front_vram_fill(g, FRONT_PLANE_B, 0x2000, BLANK_CELL);
+    front_fill(g, LAYER_B, 0, PLANE_ROWS, BLANK_CELL);
+    front_fill(g, LAYER_W, 0, PLANE_ROWS, BLANK_CELL);
     snd_play_music(g, SONG_STAFF);
     snd_start_song(g, 0xFF);
     front_display_off(g);
     front_clear_palette(g);
     front_reset_scroll(g);
-    front_vram_bytes(g, PICTURE_VRAM, e->forest, sizeof e->forest);
+    front_tiles(g, PICTURE_TILE, e->forest, sizeof e->forest);
     front_display_on(g);
     show_forest(g);
     front_frame(g);
@@ -282,7 +268,7 @@ void ending_run(HzGame *g)
     front_frame(g);
     front_reset_scroll(g);
 
-    front_vram_bytes(g, ENDE_VRAM, e->ende, sizeof e->ende);
+    front_tiles(g, ENDE_TILE, e->ende, sizeof e->ende);
     draw_ende(g);
     front_set_target(g);
     for (int i = 0; i <= ENDE_FRAMES && !g->quit; i++) {

@@ -50,7 +50,7 @@
  * fuel, $4000 P2's. A script that never lets
  * Start go would pause for ever: past 200,000 VBlanks the harness quits. */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/game.h"
 
 #include <stdio.h>
@@ -250,6 +250,11 @@ static void set_hq_hp(HzGame *g, int p, u16 hp)
     post_set_hq_hp(hq, hp);
 }
 
+/* (Half B of docs/hackable.md's step 1) The cartridge's VRAM, laid out
+ * from the draw layer's changes by tools/video_vdp.c. */
+static VideoVdp g_cart;
+static Video g_video;
+
 /* The window cells under the eight HUD bars (HUD_UpdateGauges' commands:
  * P1 HP, HQ, ammo, fuel, then P2's), as VRAM holds them. */
 static const struct {
@@ -283,11 +288,11 @@ static u32 crc_bytes(u32 crc, const u8 *p, size_t n)
 }
 
 /* CRC-32 of those cells' bytes, bar by bar. */
-static u32 bars_crc(const HzGame *g)
+static u32 bars_crc(void)
 {
     u32 crc = 0xFFFFFFFFu;
     for (int b = 0; b < 8; b++) {
-        crc = crc_bytes(crc, g->vdp->vram + BARS[b].addr,
+        crc = crc_bytes(crc, g_cart.vdp->vram + BARS[b].addr,
                         (size_t)BARS[b].cells * 2);
     }
     return ~crc;
@@ -316,7 +321,7 @@ static void put_state(FILE *f, const HzGame *g)
     fprintf(f, " %X %X %X %X %X %X %X %X %X", g->mech[0].hp,
             g->mech[0].ammo, g->mech[0].fuel, g->mech[1].hp, g->mech[1].ammo,
             g->mech[1].fuel, shown(&g->mech[0]), shown(&g->mech[1]),
-            bars_crc(g));
+            bars_crc());
     fprintf(f, " %X %X %X ", g->unit_ai_group, g->colour_cycle[0],
             g->colour_cycle[1]);
     for (int r = 0; r < HZ_ANIM_RECORDS; r++) {
@@ -327,8 +332,8 @@ static void put_state(FILE *f, const HzGame *g)
         fprintf(f, "%04X", g->anim_tile_shown[r]);
     }
     fprintf(f, " %X %X",
-            ~crc_bytes(0xFFFFFFFFu, g->vdp->vram, 0x4000),
-            ((u32)g->vdp->cram[2] << 16) | g->vdp->cram[11]);
+            ~crc_bytes(0xFFFFFFFFu, g_cart.vdp->vram, 0x4000),
+            ((u32)g_cart.vdp->cram[2] << 16) | g_cart.vdp->cram[11]);
     fprintf(f, " %X %X %X %X\n", g->demo_pos[0], g->demo_pos[1],
             g->demo_frames[0], g->demo_frames[1]);
 }
@@ -506,8 +511,10 @@ int main(int argc, char **argv)
     static Vdp vdp;
     static HzGame game;
     Loop loop = { &pads, 0 };
+    video_init(&g_video);
     vdp_reset(&vdp);
-    game_init(&game, &assets, &vdp);
+    video_vdp_watch(&g_cart, &g_video, &vdp);
+    game_init(&game, &assets, &g_video);
     game.frame = on_frame;
     game.frame_user = &loop;
     game.options[0] = (u8)mode;

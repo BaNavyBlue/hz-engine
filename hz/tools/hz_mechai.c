@@ -28,7 +28,7 @@
  * the AI's fields (HzMechAI) at +$80-$FF as the original lays them out,
  * records and units as the pointers it keeps. */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 #include "../src/game/tables.h"
@@ -706,10 +706,10 @@ static void poke_ai(HzGame *g, int p)
 static int run_game(const HzAssets *assets, Dump *d, int map, int mode,
                     int difficulty, int frames, int pokes, int ai_pokes)
 {
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
-    vdp_reset(&vdp);
-    game_init(&game, assets, &vdp);
+    video_init(&video);
+    game_init(&game, assets, &video);
     HzGame *g = &game;
     g->frame = frame_hook;
     g->options[0] = (u8)mode;

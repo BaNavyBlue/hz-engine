@@ -26,7 +26,7 @@
  * RAM; and of v_grid as it is, and the 64 shots' +$00-$18. --state writes those images at frame FRAME (0-based) to STATE_OUT,
  * so the check can name the fields that differ. */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 
@@ -294,26 +294,16 @@ static void fill_state(const HzGame *g)
     }
 }
 
+/* (Half B of docs/hackable.md's step 1) The cartridge's video memory as
+ * the check compares it: the draw layer's changes laid out by
+ * tools/video_vdp.c. */
+static VideoVdp g_cart;
+
 static void on_frame(HzGame *g, void *user)
 {
     Run *r = user;
-    Vdp *v = g->vdp;
-    static u8 screen[SCREEN_W * SCREEN_H];
-    vdp_render(v, screen);          /* applies HBlank's write, as shown */
-    u8 vs[VDP_VSRAM_WORDS * 2];
-    for (int i = 0; i < VDP_VSRAM_WORDS; i++) {
-        vs[i * 2] = (u8)(v->vsram[i] >> 8);
-        vs[i * 2 + 1] = (u8)v->vsram[i];
-    }
-    fprintf(r->out, "F %d %08X ", r->done,
-            (unsigned)crc32_buf(v->vram, VDP_VRAM_SIZE));
-    for (int i = 0; i < VDP_CRAM_WORDS; i++) {
-        fprintf(r->out, "%03X", v->cram[i] & 0x0EEE);
-    }
-    fprintf(r->out, " %08X ", (unsigned)crc32_buf(vs, sizeof vs));
-    for (int i = 0; i < VDP_REG_COUNT; i++) {
-        fprintf(r->out, "%02X", v->reg[i]);
-    }
+    fprintf(r->out, "F %d ", r->done);
+    video_vdp_frame_line(&g_cart, g->video, r->out);
     fputc('\n', r->out);
 
     fill_state(g);
@@ -333,7 +323,9 @@ static void on_frame(HzGame *g, void *user)
             fwrite(g_posts, 1, sizeof g_posts, f);
             fwrite(g_grid, 1, sizeof g_grid, f);
             fwrite(g_shots, 1, sizeof g_shots, f);
-            fwrite(v->vram, 1, VDP_VRAM_SIZE, f);
+            static u8 vram[VDP_VRAM_SIZE];
+            video_vdp_vram(&g_cart, vram);
+            fwrite(vram, 1, VDP_VRAM_SIZE, f);
             fclose(f);
         }
     }
@@ -410,11 +402,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    static Video video;
     static Vdp vdp;
     static HzGame game;
     HzGame *g = &game;
+    video_init(&video);
     vdp_reset(&vdp);
-    game_init(g, &assets, &vdp);
+    video_vdp_watch(&g_cart, &video, &vdp);
+    game_init(g, &assets, &video);
     /* A cold boot's v_options (mode 5, v_option2 $FF) and Snd_Init, then
      * MainLoop_Title up to MenuModule_Title; its sound isn't logged (the
      * check starts after it). */

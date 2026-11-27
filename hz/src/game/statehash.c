@@ -5,7 +5,6 @@
 
 #include "statehash.h"
 
-#include "../core/hz_vdp.h"
 #include "romcodes.h"
 
 #include <string.h>
@@ -338,10 +337,72 @@ static void leave_out_display(const HzGame *g, u64 part[STATE_HASH_PARTS])
     }
 }
 
+/* (Half B of docs/hackable.md's step 1) What the draw layer holds, a part
+ * each for its tiles and cells, its colours, its scroll and layout, and
+ * its sprites, written out big-endian a field at a time (no struct's
+ * padding or byte order in it). */
+static u64 fnv16(u64 h, u16 w)
+{
+    const u8 b[2] = { (u8)(w >> 8), (u8)w };
+    return state_fnv(h, b, 2);
+}
+
+static u64 fnv_sprite(u64 h, const Sprite *s)
+{
+    const u8 b[11] = {
+        (u8)((u16)s->x >> 8), (u8)s->x, (u8)((u16)s->y >> 8), (u8)s->y,
+        (u8)(s->tile >> 8), (u8)s->tile, s->w, s->h,
+        (u8)(s->pal | (s->prio << 2) | (s->flip_h << 3) | (s->flip_v << 4)),
+        s->colours, 0
+    };
+    return state_fnv(h, b, sizeof b);
+}
+
+static void hash_display(const Video *v, u64 part[STATE_HASH_PARTS])
+{
+    u64 h = state_fnv(STATE_FNV_BASIS, v->tiles, sizeof v->tiles);
+    for (int l = 0; l < LAYER_COUNT; l++) {
+        for (int r = 0; r < PLANE_ROWS; r++) {
+            for (int c = 0; c < PLANE_COLS; c++) {
+                h = fnv16(h, v->cells[l][r][c]);
+            }
+        }
+    }
+    part[6] = h;
+    h = STATE_FNV_BASIS;
+    for (int i = 0; i < VIDEO_COLOURS; i++) {
+        h = fnv16(h, v->colours[i]);
+    }
+    part[7] = h;
+    h = STATE_FNV_BASIS;
+    for (int l = 0; l < LAYER_COUNT; l++) {
+        h = fnv16(h, (u16)v->scroll_x[l]);
+        h = fnv16(h, (u16)v->scroll_y[l]);
+    }
+    h = fnv16(h, (u16)((v->layout << 1) | v->display));
+    part[8] = h;
+    h = STATE_FNV_BASIS;
+    for (int i = 0; i < v->sprite_count; i++) {
+        h = fnv_sprite(h, &v->sprite[i]);
+    }
+    h = fnv16(h, (u16)v->sprite_count);
+    h = fnv16(h, (u16)v->game_at);
+    h = fnv16(h, (u16)((v->held << 15) | (v->back_at & 0x7FFF)));
+    for (u32 i = 0; i < v->behind_count; i++) {
+        h = fnv_sprite(h, &v->behind[i]);
+    }
+    h = fnv16(h, v->sprite_colours_on);
+    for (int n = 1; n < 16; n++) {
+        if ((v->sprite_colours_on >> n) & 1) {
+            h = state_fnv(h, v->sprite_colours[n], 16);
+        }
+    }
+    part[9] = h;
+}
+
 static void hash_parts(const HzGame *g, u64 part[STATE_HASH_PARTS],
                        bool display)
 {
-    const Vdp *v = g->vdp;
     fill_globals(g, g_globals);
     for (int p = 0; p < 2; p++) {
         fill_mech(&g->mech[p], g_mechs[p]);
@@ -356,8 +417,6 @@ static void hash_parts(const HzGame *g, u64 part[STATE_HASH_PARTS],
     for (int i = 0; i < HZ_SHOTS; i++) {
         fill_shot(&g->shots[i], g_shots[i]);
     }
-    u8 words[VDP_VSRAM_WORDS * 2 > VDP_CRAM_WORDS * 2
-             ? VDP_VSRAM_WORDS * 2 : VDP_CRAM_WORDS * 2];
     part[0] = state_fnv(STATE_FNV_BASIS, g_globals, sizeof g_globals);
     part[1] = state_fnv(STATE_FNV_BASIS, g_mechs, sizeof g_mechs);
     part[2] = state_fnv(STATE_FNV_BASIS, g_units, sizeof g_units);
@@ -365,16 +424,7 @@ static void hash_parts(const HzGame *g, u64 part[STATE_HASH_PARTS],
     part[3] = state_fnv(STATE_FNV_BASIS, g_posts, sizeof g_posts);
     part[4] = state_fnv(STATE_FNV_BASIS, g_shots, sizeof g_shots);
     part[5] = state_fnv(STATE_FNV_BASIS, g_grid, sizeof g_grid);
-    part[6] = state_fnv(STATE_FNV_BASIS, v->vram, VDP_VRAM_SIZE);
-    for (int i = 0; i < VDP_CRAM_WORDS; i++) {
-        wr16(words, (u32)i * 2, v->cram[i]);
-    }
-    part[7] = state_fnv(STATE_FNV_BASIS, words, VDP_CRAM_WORDS * 2);
-    for (int i = 0; i < VDP_VSRAM_WORDS; i++) {
-        wr16(words, (u32)i * 2, v->vsram[i]);
-    }
-    part[8] = state_fnv(STATE_FNV_BASIS, words, VDP_VSRAM_WORDS * 2);
-    part[9] = state_fnv(STATE_FNV_BASIS, v->reg, VDP_REG_COUNT);
+    hash_display(g->video, part);
     if (!display) {
         leave_out_display(g, part);
         part[0] = state_fnv(STATE_FNV_BASIS, g_globals, sizeof g_globals);

@@ -1,23 +1,10 @@
 #ifndef HZ_GAME_H
 #define HZ_GAME_H
 
-#include "../core/hz_vdp.h"
+#include "../core/video.h"
 #include "assets.h"
 #include "nightmare.h"
 #include "ref.h"
-
-/* -- VRAM, as VDP_Init's registers and Game_LoadMap's uploads lay it out -- */
-#define VRAM_MAP_TILES     0x0000u  /* 512 tiles, the map's $22400 entry */
-#define VRAM_MECH1_FRAME   0x4000u  /* 16 tiles, DMA'd in VDP_UploadSprites */
-#define VRAM_MECH2_FRAME   0x4200u
-#define VRAM_SPRITE_TILES  0x4800u  /* SpriteTiles: tiles $240-$4FF */
-#define VRAM_HUD_TILES     0xA000u  /* HUDTiles: tiles $500-$5FF */
-#define VRAM_PLANE_A       0xC000u  /* view A */
-#define VRAM_SPRITES       0xD000u  /* sprite table */
-#define VRAM_HSCROLL       0xD400u  /* full-screen: A at +0, B at +2 */
-#define VRAM_FONT          0xD620u  /* FontTiles: tiles $6B1-$6FF */
-#define VRAM_PLANE_B       0xE000u  /* view B */
-#define VRAM_WINDOW        0xF000u  /* HUD strip (and the split's mask) */
 
 #define HZ_SPRITE_LIST     298  /* v_sprite_list: the $950 bytes Sprites_Build
                                    clears (37 x 64 + 16) */
@@ -108,8 +95,19 @@ typedef enum {
     HZ_LOOP_QUIT        /* the port's own: the host has asked to stop */
 } HzLoopExit;
 
-/* A sprite table entry as the VDP holds it (hz_vdp.h). */
-typedef VdpSprite HzSprite;
+/* A sprite as the cartridge's RAM holds it (v_sprite_fixed, v_sprite_list,
+ * the order menu's radar, the loading screen's): its words in the VDP's
+ * sprite table format. sprites_upload hands the frame's to the draw layer
+ * in screen pixels (Sprite, video.h). */
+typedef struct {
+    u16 y;          /* +0: screen y + 128 */
+    u16 size_link;  /* +2: size in bits 8-11 (width - 1 in 10-11, height
+                       - 1 in 8-9), the next sprite in bits 0-6; (session
+                       72) the port's colour table in bits 12-15 */
+    u16 attr;       /* +4: priority, palette line, flips, tile (a cell
+                       word) */
+    u16 x;          /* +6: screen x + 128 */
+} HzSprite;
 
 /* The mech record (v_mech1/2, $100 bytes each), only the fields the
  * ported code has touched so far, with their offsets. */
@@ -710,7 +708,7 @@ typedef struct {
 
 typedef struct {
     u16 last;
-    u16 plane;              /* the plane's VRAM */
+    u16 layer;              /* the layer (LayerId): A or B */
     u8  col, row;           /* the first cell */
     u16 cells[HZ_QUEUE_CELLS];
     u8  clear;              /* plane B's: the row or column to clear */
@@ -718,14 +716,16 @@ typedef struct {
 
 /* A bar HUD_QueueBar queued for HUD_FlushBars (v_gauge_queue, 16 of $26
  * bytes): the cell count - 1 (as the dbf counts; 0 is a free entry), the
- * first cell's VRAM address (the 68k keeps the VDP write command for it),
- * a tile word per cell. */
+ * layer and cell of its first cell (the 68k keeps the VDP write command
+ * for it), a tile word per cell; the cells run along the row, on into the
+ * next. */
 #define HZ_GAUGE_BARS   16
 #define HZ_GAUGE_CELLS  16
 
 typedef struct {
     u16 last;
-    u16 addr;
+    u8  layer;              /* LayerId */
+    u8  col, row;
     u16 cells[HZ_GAUGE_CELLS];
 } HzGaugeBar;
 
@@ -883,17 +883,18 @@ typedef struct {
     HzFineBox box[2][HZ_FINE * HZ_FINE];
 } HzCrowdFine;
 
-/* (Session 61) With UNITS, the units' sprites, every frame, past the
- * VDP's table (sprites.c, vdp_set_more): as many as there are. */
+/* (Session 61) With UNITS, the units' sprites, every frame, drawn behind
+ * the rest (sprites.c, video_sprites_behind): as many as there are. */
 typedef struct {
-    HzSprite *sprite;
-    u32       count;
-    u32       cap;              /* allocated */
+    Sprite *sprite;
+    u32     count;
+    u32     cap;                /* allocated */
 } HzSpriteMore;
 
 struct HzGame {
     const HzAssets *assets;     /* the game's data, read at start-up */
-    Vdp         *vdp;
+    Video       *video;       /* the draw layer (src/core/video.h): the
+                                 host's; NULL, a copy that never draws */
     HzFrameFn    frame;
     void        *frame_user;
 
@@ -1167,7 +1168,7 @@ struct HzGame {
 };
 
 /* game.c */
-void game_init(HzGame *g, const HzAssets *assets, Vdp *vdp);
+void game_init(HzGame *g, const HzAssets *assets, Video *video);
 void game_wait_vblank(HzGame *g);           /* VDP_WaitVBlank */
 void game_unmask(HzGame *g);                /* move.w #$2000,sr */
 void game_display_on(HzGame *g);            /* VDP_DisplayOn */
@@ -1403,14 +1404,17 @@ void map_fx_update(HzGame *g);              /* MapFx_Update */
 
 /* hud.c */
 void hud_update_gauges(HzGame *g);          /* HUD_UpdateGauges */
-void hud_queue_bar(HzGame *g, u16 value, u16 max, int cells, u16 addr);
+void hud_queue_bar(HzGame *g, u16 value, u16 max, int cells, LayerId layer,
+                   int col, int row);
                                             /* HUD_QueueBar */
 void hud_flush_bars(HzGame *g);             /* HUD_FlushBars */
 
 /* sprites.c */
 void sprites_build(HzGame *g);              /* Sprites_Build */
 void sprites_multiplex(HzGame *g);          /* Sprites_Multiplex */
-void vdp_upload_sprites(HzGame *g);         /* VDP_UploadSprites */
+void sprites_upload(HzGame *g);             /* VDP_UploadSprites */
+Sprite sprite_from_ram(const HzSprite *s);
+bool sprites_show_one(HzGame *g, const HzSprite *s);
 
 /* The sound effects (the Z80 driver's numbers, SfxPriority's order). */
 enum {
@@ -1456,9 +1460,10 @@ void snd_flush_sfx(HzGame *g);              /* Snd_FlushSfx */
 void snd_pause(HzGame *g, u8 arg);          /* Snd_Pause */
 
 /* screen.c */
-void vdp_init_game(HzGame *g);              /* VDP_Init */
+void screen_start_game(HzGame *g);          /* VDP_Init */
 void screen_init_game(HzGame *g);           /* Screen_InitGame */
 void sprites_init_fixed(HzGame *g);         /* Sprites_InitFixed */
+void screen_divider(const HzGame *g, HzSprite out[6]);
 void palette_fade_in_map(HzGame *g);        /* Palette_FadeInMap */
 
 /* load.c */

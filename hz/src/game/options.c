@@ -114,7 +114,7 @@ static Page page_setup(HzGame *g)
     front_display_off(g);
     front_reset_scroll(g);
     front_clear_sprites(g);
-    front_vram_bytes(g, 0x0000, m->menu_font, sizeof m->menu_font);
+    front_tiles(g, 0x000, m->menu_font, sizeof m->menu_font);
     for (int i = 0; i < 64; i++) {
         f->palette[i] = m->menu_palette[i];
     }
@@ -157,7 +157,7 @@ static Page page_menu(HzGame *g)
 {
     HzFront *f = &g->front;
     front_frame(g);
-    front_vram_fill(g, 0xF180, 0x780, 0x0030);
+    front_fill(g, LAYER_W, 3, 15, 0x0030);
     front_text_palette(g, 0);
     front_text_font(g, FONT_PLAIN);
     front_box(g, 1, 3, 8, 11);
@@ -545,8 +545,8 @@ static void draw_map_names(HzGame *g)
 }
 
 /* MapSelect_Preview ($55F20): the map's radar picture in a palette-1 box
- * at (25, 2): the map's palette into CRAM line 3, its radar tiles to VRAM
- * $2000 (tiles $100-$13F), drawn 8 x 8 at (26, 3). */
+ * at (25, 2): the map's palette into CRAM line 3, its radar into
+ * tiles $100-$13F, drawn 8 x 8 at (26, 3). */
 static void map_preview(HzGame *g)
 {
     HzFront *f = &g->front;
@@ -558,14 +558,8 @@ static void map_preview(HzGame *g)
         f->palette[48 + i] = map->palette[i];
     }
     front_upload_lines(g, 0x8);
-    front_vram_bytes(g, 0x2000, map->radar, HZ_RADAR_IMAGE);
-    u16 tile = 0xE100;
-    for (int r = 0; r < 8; r++) {
-        front_vram_at(g, (u16)(FRONT_WINDOW + ((3 + r) * 64 + 26) * 2));
-        for (int c = 0; c < 8; c++) {
-            vdp_write16(g->vdp, tile++);
-        }
-    }
+    front_tiles(g, 0x100, map->radar, HZ_RADAR_IMAGE);
+    front_picture(g, LAYER_W, 26, 3, 0xE100, 8, 8);
 }
 
 /* MapSelect_Highlight ($55E80): the old name plain (QUIRK: plain even if

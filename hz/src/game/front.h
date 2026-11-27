@@ -2,14 +2,14 @@
 #define HZ_FRONT_H
 
 /* The front end: the $53000 module's title and options screen (title.c,
- * options.c) and the helpers they share (front.c). The menus have a VDP
- * set-up of their own (M_VDPInit): planes A and B both at $E000, the
- * window plane at $F000 over the whole screen, so what shows is the
- * window with plane B behind its transparent cells; no interrupts. They
- * draw through the same VDP model as the game, and hand each frame to the
- * host where the 68k waits for VBlank (M_WaitVBlank and its kin poll the
- * VDP's status; the port calls the frame hook), so the host's frame hook,
- * pads and quit work as in the game.
+ * options.c) and the helpers they share (front.c). The menus have a screen
+ * of their own (M_VDPInit; the draw layer's VIDEO_MENUS, video.h): the
+ * window layer over the whole screen, with layer B behind its transparent
+ * cells; no interrupts. They draw through the same draw layer as the game,
+ * and hand each frame to the host where the 68k waits for VBlank
+ * (M_WaitVBlank and its kin poll the VDP's status; the port calls the
+ * frame hook), so the host's frame hook, pads and quit work as in the
+ * game.
  *
  * The state lives in HzGame.front (game.h: the menu module's RAM,
  * $FF9800-$FF9A2F, which MainLoop_Title's per-game clear zeroes); what
@@ -42,9 +42,6 @@
                                    strings stands for it */
 #define MENU_BACKGROUND  '`'    /* tile $30, the options' background */
 
-#define FRONT_WINDOW     0xF000 /* the window plane: 64 cells a row */
-#define FRONT_PLANE_B    0xE000
-
 /* The pad bits as M_ReadJoypads makes them (both pads OR'd, the HZ_PAD_*
  * bits; the word's high byte is always $FF). */
 #define FRONT_PADS       0x00FF
@@ -59,9 +56,19 @@ void front_clear_sprites(HzGame *g);        /* M_ClearSprites */
 void front_clear_planes(HzGame *g);         /* M_ClearPlanes */
 void front_apply_scroll(HzGame *g);         /* M_ApplyScroll: plane B */
 void front_blank_planes(HzGame *g);         /* M_BlankPlanes */
-void front_vram_at(HzGame *g, u16 addr);    /* M_VDPSetAddr */
-void front_vram_bytes(HzGame *g, u16 addr, const u8 *src, u32 bytes);
-void front_vram_fill(HzGame *g, u16 addr, u32 bytes, u16 word);
+
+/* What the menus draw (src/core/video.h, the menus' layout: layer B the
+ * picture behind, the window layer over the whole screen in front):
+ * tiles' pictures from tile `first` on; a cell (a column past the row's
+ * end runs on into the next row, as the 68k's writes run on through
+ * VRAM); a picture of consecutive tiles, `rows` rows of `across` cells
+ * from `first` (with its palette and priority bits); `rows` rows of a
+ * layer filled with one cell. */
+void front_tiles(HzGame *g, u16 first, const u8 *src, u32 bytes);
+void front_put(HzGame *g, LayerId layer, int col, int row, u16 word);
+void front_picture(HzGame *g, LayerId layer, int col, int row, u16 first,
+                   int across, int rows);
+void front_fill(HzGame *g, LayerId layer, int row, int rows, u16 word);
 
 /* A frame: M_WaitVBlank and its "if on" kin. With the display on the
  * finished frame goes to the host; with it off nothing waits. */

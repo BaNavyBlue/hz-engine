@@ -14,7 +14,7 @@
  * dir x y speed life missile result", or "C" for Combat_Update), then the
  * same in lower case after it. */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 
@@ -323,10 +323,10 @@ int main(int argc, char **argv)
     if (f == NULL) {
         return 1;
     }
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
-    vdp_reset(&vdp);
-    game_init(&game, &assets, &vdp);
+    video_init(&video);
+    game_init(&game, &assets, &video);
     game.options[0] = 0;
     game.options[3] = (u8)map;
     if (!game_new(&game)) {

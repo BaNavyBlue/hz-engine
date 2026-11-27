@@ -25,7 +25,7 @@ const char *const EX_MAP_NAMES[8] = {
     "oase"
 };
 
-/* Measured VA4 DAC levels (the PS2 port's, and hz_vdp.c's). */
+/* Measured VA4 DAC levels (the PS2 port's, and src/core/cram.c's). */
 static const u8 DAC[8] = { 0, 52, 87, 116, 144, 172, 206, 255 };
 
 bool ex_fail(HzEx *x, const char *fmt, ...)

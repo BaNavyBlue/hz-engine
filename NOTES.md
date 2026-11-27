@@ -37,6 +37,12 @@ file holds the decisions, what is proved and what is next.
 * The network game's id hashes a PNG by its picture, not its bytes
   (`NET_GAME_CODE` 12; the owner's choice, "Hash PNGs by picture"), so
   files made by the game's C and the private tree's Pillow play together.
+* (2026-11-27) The engine follows the private tree: each of its pushes is
+  synced here, proved and released, so the engine's `NET_GAME_CODE` is
+  always its builds', and the two play together (and against the same
+  AI). The owner: "just keep the engine in sync with stand alone please".
+  It had fallen a code behind (12 against 13), and the private builds' AI
+  showed as OTHER GAME.
 * Licence: MIT for the engine's own work (`LICENSE`, "Copyright (c) 2026
   BaNavyBlue"), including the disassembly's names in `hz/hz.sym`, which are
   the owner's own work. The third parties keep theirs (`NOTICE.md`).
@@ -151,6 +157,30 @@ start".)
   this repository's own name is found, in `LICENSE`, `NOTES.md` and
   `hz.rc`.
 
+### The sync of 2026-11-27 (v0.1.1)
+
+From the private tree's commit "Step 1 of the hackable plan: the game draws
+through its own draw layer (src/core/video.h), not a VDP model", and the
+plan before it (`hz/docs/hackable.md`). The game now draws through a layer
+of its own, in place of a VDP model. `NET_GAME_CODE` is 13: no frame changed,
+but the display that a split-screen game hashes did.
+
+* **The sync:** 283 files, the author's name put as "the owner" 207 times,
+  and nothing left for its checks to refuse.
+* **The files:** `hz_assets IMAGE` made 144. With the port's five, 149 of
+  149 are as proved (`tools/assets.sha256`, unchanged). The network id is
+  `C5F18E693167BD3A`, the same as the private commit's own assets give
+  under the same build.
+* **The build:** `hz`, `hz_headless`, `hz_assets` and `hz_gameid` build
+  with no warnings (MSYS2 UCRT64, Q v1.5.4). The private commit built on
+  Linux (gcc, glibc) with no warnings.
+* **The leak check:** 299 files, 8 flagged. Seven are v0.1.0's seven. The
+  new one is `hz/tools/video_vdp.c`, a check tool's model of the VDP, with
+  the VDP's start-up registers for the game and the menus (38 bytes). They
+  are the same values `hz/src/game/tables.c` already carries. Kept, as
+  those are.
+* **Identity:** as before. Only this repository's own name is found.
+
 ## Not yet run or seen
 
 * The windowed game on Linux (a display, the drop and the file dialog)
@@ -161,12 +191,12 @@ start".)
 
 ## Next
 
-1. Public when the owner says (the repository is private).
+1. ~~Public when the owner says~~: public (the owner, 2026-11-25).
 2. macOS: its job builds on pushes to main; into the release once it has
    been seen to pass and the owner says (the release job's `needs`, its
    downloads and its notes).
-3. A later release: sync from the private tree, prove again (this file's
-   list), then a new tag `v0.1.1`, `v0.2.0` and so on.
+3. Each push of the private tree: sync from it, prove again (this file's
+   list), then the next tag. `v0.1.1` was the first (2026-11-27).
 
 ## Open
 

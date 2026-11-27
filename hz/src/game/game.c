@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <string.h>
 
-void game_init(HzGame *g, const HzAssets *assets, Vdp *vdp)
+void game_init(HzGame *g, const HzAssets *assets, Video *video)
 {
     /* (Session 61) The unit lists, the units' sprites past the VDP's
      * table, the fine grid and the nightmare AI's are kept (an HzGame
@@ -25,7 +25,7 @@ void game_init(HzGame *g, const HzAssets *assets, Vdp *vdp)
     }
     units_reset(g);
     g->assets = assets;
-    g->vdp = vdp;
+    g->video = video;
     /* Snd_Init at boot: the sfx queue empty. It lives in the $FFF000
      * block, which MainLoop_Title's clear leaves alone. */
     g->sfx_priority = 0xFF;
@@ -36,9 +36,10 @@ void game_init(HzGame *g, const HzAssets *assets, Vdp *vdp)
 
 /* HBlank ($4760), once per frame: the HInt counter is 30, so the first
  * interrupt comes after line 30. Unless the main loop has blocked it
- * (v_split_done set), it writes sprite 5's link word back. The VDP reads
- * sprite links a line ahead, so sprites past 5 show from line 32: the
- * HUD strip's 32 lines never show a game sprite.
+ * (v_split_done set), it writes sprite 5's link word back: the game's
+ * sprites, held back from the top of the frame, are drawn from line 32
+ * (the VDP reads sprite links a line ahead), so the HUD strip's 32 lines
+ * never show one.
  *
  * The 68k's handler runs part-way through the frame, while the main loop
  * is busy; the port decides it when the frame is handed over, with
@@ -48,19 +49,17 @@ static void hblank(HzGame *g)
     if (g->split_done) {
         return;
     }
-    vdp_raster_write(g->vdp, 32, VDP_VRAM, VRAM_SPRITES + 5 * 8 + 2,
-                     g->sprite5_link);
+    video_sprites_back(g->video, VIDEO_HUD_LINES);
     g->split_done++;
 }
 
-/* VBlank ($4788): with the split screen running, cut sprite 5's link
- * (size kept, link 0) for the top of the next frame and let HBlank put it
- * back; count the frame, saturating. */
+/* VBlank ($4788): with the split screen running, sprite 5's link cut (size
+ * kept, link 0): the game's sprites held back from the top of the next
+ * frame, for HBlank to let back; count the frame, saturating. */
 static void vblank(HzGame *g)
 {
     if (g->split_enable) {
-        vdp_command(g->vdp, 0x502A0003);                /* $D02A */
-        vdp_write16(g->vdp, (u16)(g->sprite5_link & 0xFF00));
+        video_sprites_hold(g->video, true);
         g->split_done = 0;
     }
     if (g->frame_counter != 0xFFFFFFFFu) {              /* .count */
@@ -94,6 +93,7 @@ void game_wait_vblank(HzGame *g)
     if (g->frame != NULL) {
         g->frame(g, g->frame_user);
     }
+    video_frame_done(g->video);
     if (g->interrupts_on) {
         vblank_handler(g);
     } else {
@@ -118,13 +118,13 @@ void game_unmask(HzGame *g)
 /* VDP_DisplayOn ($A7A) / VDP_DisplayOff ($A8C) */
 void game_display_on(HzGame *g)
 {
-    vdp_reg(g->vdp, 0x8164);
+    video_display(g->video, true);
     g->vdp_reg1 = 0x8164;
 }
 
 void game_display_off(HzGame *g)
 {
-    vdp_reg(g->vdp, 0x8124);
+    video_display(g->video, false);
     g->vdp_reg1 = 0x8124;
 }
 
@@ -205,9 +205,9 @@ u32 game_random(HzGame *g)
  * blocked (v_split_done 1, v_hud_sprite_cut 0: the word $100). */
 void game_title_prepare(HzGame *g)
 {
-    vdp_set_more(g->vdp, NULL, 0, 0);   /* (session 61) a crowd's gone */
-    vdp_set_colours(g->vdp, 1, NULL);   /* (session 72) and a repair */
-    vdp_set_colours(g->vdp, 2, NULL);   /* truck's colours: the game's */
+    video_sprites_behind(g->video, NULL, 0);    /* (session 61) a crowd's */
+    video_sprite_colours(g->video, 1, NULL);    /* gone; (session 72) and */
+    video_sprite_colours(g->video, 2, NULL);    /* a repair truck's colours */
     snd_fade_music(g, 0);
     snd_stop_sfx(g);
     g->game_over = 0;
@@ -228,7 +228,7 @@ HzSetup game_setup_after_title(HzGame *g)
 {
     g->interrupts_on = false;
     game_setup_mode(g);
-    vdp_init_game(g);
+    screen_start_game(g);
     if (!game_load_map(g)) {
         return HZ_SETUP_NO_MAP;
     }
@@ -384,7 +384,7 @@ static u8 pause_frame(HzGame *g)
     g->split_done = 1;
     game_display_off(g);
     sprites_multiplex(g);
-    vdp_upload_sprites(g);
+    sprites_upload(g);
     game_display_on(g);
     g->split_enable = 1;
     g->split_done = 0;
@@ -601,14 +601,14 @@ void game_frame_end(HzGame *g)
     game_wait_vblank(g);
     g->split_enable = 0;
     g->split_done = 1;
-    vdp_reg(g->vdp, 0x8124);
-    vdp_upload_sprites(g);
+    video_display(g->video, false);
+    sprites_upload(g);
     map_flush_scroll(g);
     order_menu_update(g);                               /* OrderMenu_UpdateBoth */
     map_anim_tiles_upload(g);
     map_fx_update(g);
     hud_flush_bars(g);
-    vdp_reg(g->vdp, 0x8164);
+    video_display(g->video, true);
     g->split_enable = 1;
     g->split_done = 0;
     snd_flush_sfx(g);

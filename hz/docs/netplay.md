@@ -281,9 +281,11 @@ wants comes out, sent as any player's pad is, and its memory
 (`HzGame.nightmare[side]`) is kept. The AI writes nothing else (it calls
 nothing on the VDP, the sound or the game's Random), and nothing in a
 two-player game reads that memory, so the person's game and the AI's stay
-the same: the hashes say so. `vdp_render` applies the split's raster
-write on the person's machine (VRAM, which is hashed); the AI applies it
-without drawing (`vdp_apply_rasters`).
+the same: the hashes say so. (Up to session 79 `vdp_render` applied the
+split's raster write on the person's machine, in VRAM, which was hashed,
+and the AI applied it without drawing, `vdp_apply_rasters`. Since session
+80 the draw layer holds the HUD strip's hold on the sprites itself, the
+same on both: `src/core/video.h`.)
 
 **Its delay was one frame** (sessions 58-63). The AI was made seeing its
 pad take at once. At the usual delay (3 frames on a local line) it

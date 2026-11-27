@@ -100,9 +100,10 @@ of the side's palette line into another: the truck's greys to the olives
 both lines share (13 to 12, 14 to 6, 15 to 14) and its tank's colours to
 white and red (5 to 15, 4 to 3); the mechanic's body (7 and 8, the side's
 colours) to green and dark olive (2 and 12), his head and legs (10 and
-11) left the side's. The VDP model takes the table's number from bits
-12-15 of a sprite's size/link word, which the chip ignores and the game's
-own sprites leave clear (`vdp_set_colours`, `src/core/hz_vdp.h`); a unit's
+11) left the side's. A sprite's colour table is the number in bits 12-15
+of its size/link word, which the chip ignores and the game's own sprites
+leave clear (`Sprite.colours` and `video_sprite_colours`,
+`src/core/video.h`); a unit's
 come from its record's sprite size ($1A, $25). The order menu's picture
 is plane cells, which have no such bits, so the menu writes the SUPPLY's
 picture, recoloured, into 9 of the 32 blank sprite tiles ($3CC on) when

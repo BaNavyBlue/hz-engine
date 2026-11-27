@@ -21,7 +21,7 @@
  * Times are the game's clock (v_frame_counter: a pause doesn't count). */
 
 #include "../src/core/hz_file.h"
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/nightmare.h"
 #include "../src/game/replay.h"
@@ -426,7 +426,6 @@ static void on_frame(HzGame *g, void *user)
     if (g->quit) {
         return;
     }
-    vdp_apply_rasters(g->vdp);
     if (!p->started) {
         return;                 /* the loading screen: not recorded */
     }
@@ -672,7 +671,7 @@ int main(int argc, char **argv)
     char game[17];
     snprintf(game, sizeof game, "%016llX",
              (unsigned long long)net_game_id(hz_file_hash_end()));
-    static Vdp vdp;
+    static Video video;
     static HzGame g;
     int bad = 0;
     for (int i = 2; i < argc; i++) {
@@ -700,8 +699,8 @@ int main(int argc, char **argv)
         p->events = events;
         p->minutes = minutes;
         p->fuel_max = assets.mech_stats.stats.fuel;
-        vdp_reset(&vdp);
-        game_init(&g, &assets, &vdp);
+        video_init(&video);
+        game_init(&g, &assets, &video);
         g.frame = on_frame;
         g.frame_user = p;
         g.snd_music_on = music_on;

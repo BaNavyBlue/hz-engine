@@ -33,8 +33,6 @@
 
 #include <string.h>
 
-#define PLANE_A 0xC000u
-#define PLANE_B 0xE000u
 
 #define FONT_CURSOR     0xB7    /* the red arrow */
 #define CLOSED_STEP     9       /* mech_menu_step with the menu closed */
@@ -57,14 +55,14 @@ static bool hidden(const HzMech *m)
  * input is taken (row_shown, the price and cost drawn), so a hidden menu
  * (settled) and a shown one (drawn) buy on different frames. A muted menu
  * runs as the shown one, drawn whole at step 8, redrawn as it changes and
- * never settled, with nothing of it seen or heard here: its VRAM writes go
+ * never settled, with nothing of it seen or heard here: what it draws goes
  * to g_mute_vdp, and its scroll, sounds and gauge bars are left out. */
 static bool muted(const HzGame *g, const HzMech *m)
 {
     return g->own_view != 0 && m->view < 0;
 }
 
-static Vdp g_mute_vdp;          /* what a muted menu draws: never shown */
+static Video g_mute_video;      /* what a muted menu draws: never shown */
 
 /* A sound the menu makes, unless it is muted. */
 static void menu_sfx(HzGame *g, const HzMech *m, u8 sfx)
@@ -79,41 +77,62 @@ static u8 newly_pressed(const HzMech *m)
     return (u8)((m->pad ^ m->pad_prev) & m->pad);
 }
 
-/* The plane the menu draws on: view 0 plane A, any other plane B. */
-static u16 menu_plane(const HzMech *m)
+/* The layer the menu draws on: view 0's layer A, any other layer B. */
+static LayerId menu_layer(const HzMech *m)
 {
-    return (m->view == 0) ? PLANE_A : PLANE_B;
+    return (m->view == 0) ? LAYER_A : LAYER_B;
 }
 
-/* A plane cell's VRAM address (planes are 64 x 32 cells). */
-static u16 cell_addr(u16 plane, int col, int row)
+/* A cell of a layer (64 x 32 cells). */
+typedef struct {
+    LayerId layer;
+    int col, row;
+} At;
+
+static At cell_at(LayerId layer, int col, int row)
 {
-    return (u16)(plane + row * 0x80 + col * 2);
+    return (At){ layer, col, row };
 }
 
-static void put_cells(HzGame *g, u16 addr, const u16 *words, int n)
+/* n cells along the row from `at` (no menu row runs past the layer's
+ * edge). */
+static void put_cells(HzGame *g, At at, const u16 *words, int n)
 {
-    vdp_set_write(g->vdp, VDP_VRAM, addr);
     for (int i = 0; i < n; i++) {
-        vdp_write16(g->vdp, words[i]);
+        video_set_word(g->video, at.layer, at.col + i, at.row, words[i]);
     }
 }
 
-static void put_cell(HzGame *g, u16 addr, u16 word)
+static void put_cell(HzGame *g, At at, u16 word)
 {
-    put_cells(g, addr, &word, 1);
+    put_cells(g, at, &word, 1);
 }
 
-static void put_bytes(HzGame *g, u16 addr, const u8 *src, u32 n)
+/* Tiles' pictures from tile `first` on (`bytes` / 32 of them). */
+static void put_tiles(HzGame *g, u16 first, const u8 *src, u32 bytes)
 {
-    vdp_set_write(g->vdp, VDP_VRAM, addr);
-    vdp_write_bytes(g->vdp, src, n);
+    video_load_tiles(g->video, first, src, bytes / 32);
 }
 
-/* A VRAM fill of `bytes` zeros (VDP_Fill2K's DMA fill). */
-static void clear_vram(HzGame *g, u16 addr, u32 bytes)
+/* The tile whose 32 bytes are, on the cartridge, cells 0-15 of `layer`'s
+ * row `row` (its tiles and the game screen's layers share VRAM: layer A
+ * from tile $600, B from $700, the window from $780; four tiles a row). */
+static u16 row_tile(LayerId layer, int row)
 {
-    memset(&g->vdp->vram[addr], 0, bytes);
+    static const u16 FIRST[LAYER_COUNT] = { 0x700, 0x600, 0x780 };
+    return (u16)(FIRST[layer] + row * 4);
+}
+
+/* Half the layer (VDP_Fill2K's DMA fill of $800 bytes): the 16 rows from
+ * `row`, clear. QUIRK: the radar keeps its tiles in those rows' unseen
+ * cells (radar_tile_at), so the fill clears the radar's tiles there too.
+ * Closing shows it: the top half's fill wipes the split view A radar's
+ * top rows a frame before the bottom half's clears their cells, so the
+ * radar goes blank for that frame. */
+static void clear_rows(HzGame *g, LayerId layer, int row)
+{
+    video_fill_rows(g->video, layer, row, 16, cell_from_word(0));
+    video_clear_tiles(g->video, row_tile(layer, row), 16 * 4);
 }
 
 /* The nametable word for a character of the game's font (FontTiles,
@@ -126,16 +145,15 @@ static u16 font_cell(u8 c)
 }
 
 /* PrintChars / PrintInline / TextBuf_Print: n characters from (col, row). */
-static void print_chars(HzGame *g, u16 plane, int col, int row,
+static void print_chars(HzGame *g, LayerId plane, int col, int row,
                         const u8 *text, int n)
 {
-    vdp_set_write(g->vdp, VDP_VRAM, cell_addr(plane, col, row));
     for (int i = 0; i < n; i++) {
-        vdp_write16(g->vdp, font_cell(text[i]));
+        put_cell(g, cell_at(plane, col + i, row), font_cell(text[i]));
     }
 }
 
-static void print_text(HzGame *g, u16 plane, int col, int row,
+static void print_text(HzGame *g, LayerId plane, int col, int row,
                        const char *text)
 {
     print_chars(g, plane, col, row, (const u8 *)text, (int)strlen(text));
@@ -143,7 +161,7 @@ static void print_text(HzGame *g, u16 plane, int col, int row,
 
 /* NumToDec5: five digits, leading zeros as spaces. QUIRK: the last digit
  * is a space too unless it or one before it isn't 0, so 0 prints blank. */
-static void print_number5(HzGame *g, u16 plane, int col, int row, u16 v)
+static void print_number5(HzGame *g, LayerId plane, int col, int row, u16 v)
 {
     static const u16 POWERS[4] = { 10000, 1000, 100, 10 };
     u8 text[5];
@@ -164,7 +182,7 @@ static void print_number5(HzGame *g, u16 plane, int col, int row, u16 v)
 }
 
 /* NumToDec2: two digits, zeros shown (100 and up run past '9'). */
-static void print_number2(HzGame *g, u16 plane, int col, int row, u8 v)
+static void print_number2(HzGame *g, LayerId plane, int col, int row, u8 v)
 {
     u8 text[2] = { (u8)('0' + v / 10), (u8)('0' + v % 10) };
     print_chars(g, plane, col, row, text, 2);
@@ -201,8 +219,8 @@ static void draw_picture(HzGame *g, const HzMech *m, int col, int row,
     u16 tile = UNIT_MENU_TILES[type % 10];
     if (type == UNIT_REPAIR && repair_on(g)) {
         /* (session 72) REPAIR: the SUPPLY's picture in the truck's
-         * colours. A plane's cells have no colour table (hz_vdp.h), so
-         * the 9 tiles go, recoloured, into VRAM's blank sprite tiles
+         * colours. A layer's cells have no colour table (video.h), so
+         * the 9 tiles go, recoloured, into the blank sprite tiles
          * ($3CC on: nothing draws them). */
         const u8 *colours = g->assets->repair.colours[0];
         const u8 *src = g->assets->sprite_tiles
@@ -213,23 +231,23 @@ static void draw_picture(HzGame *g, const HzMech *m, int col, int row,
                           | colours[src[i] & 0x0F]);
         }
         tile = REPAIR_MENU_TILE;
-        put_bytes(g, REPAIR_MENU_TILE * 32, pic, sizeof pic);
+        put_tiles(g, REPAIR_MENU_TILE, pic, sizeof pic);
     }
     tile = (u16)(tile | ((m->view_index != 0) ? 0x6000 : 0x4000));
     for (int r = 0; r < 3; r++) {
         u16 cells[3] = { (u16)(tile + r), (u16)(tile + r + 3),
                          (u16)(tile + r + 6) };
-        put_cells(g, cell_addr(menu_plane(m), col, row + r), cells, 3);
+        put_cells(g, cell_at(menu_layer(m), col, row + r), cells, 3);
     }
 }
 
 /* A 2 x 2 icon whose tiles are at `tile` (down each column). */
-static void draw_icon_cells(HzGame *g, u16 plane, int col, int row, u16 tile)
+static void draw_icon_cells(HzGame *g, LayerId plane, int col, int row, u16 tile)
 {
     u16 top[2] = { tile, (u16)(tile + 2) };
     u16 bottom[2] = { (u16)(tile + 1), (u16)(tile + 3) };
-    put_cells(g, cell_addr(plane, col, row), top, 2);
-    put_cells(g, cell_addr(plane, col, row + 1), bottom, 2);
+    put_cells(g, cell_at(plane, col, row), top, 2);
+    put_cells(g, cell_at(plane, col, row + 1), bottom, 2);
 }
 
 /* OrderMenu_DrawCursor: the arrow on the current row. Carrying, row 0
@@ -249,7 +267,7 @@ static void draw_cursor(HzGame *g, HzMech *m)
     if (row > 2) {
         return;                     /* not carrying: Input keeps 0-2 */
     }
-    put_cell(g, cell_addr(menu_plane(m), ORDER_MENU_CURSOR_POS[row][0],
+    put_cell(g, cell_at(menu_layer(m), ORDER_MENU_CURSOR_POS[row][0],
                           ORDER_MENU_CURSOR_POS[row][1]),
              font_cell(FONT_CURSOR));
 }
@@ -261,7 +279,7 @@ static void erase_cursor(HzGame *g, const HzMech *m)
     if (row > 2) {
         return;                     /* never drawn there (draw_cursor) */
     }
-    put_cell(g, cell_addr(menu_plane(m), ORDER_MENU_CURSOR_POS[row][0],
+    put_cell(g, cell_at(menu_layer(m), ORDER_MENU_CURSOR_POS[row][0],
                           ORDER_MENU_CURSOR_POS[row][1]), font_cell(' '));
 }
 
@@ -279,13 +297,14 @@ static void draw_unit_choice(HzGame *g, HzMech *m)
     mn->type_shown = type;
     draw_picture(g, m, 2, 2, type);
     const HzUnitStats *st = type_stats(g, type);
-    print_chars(g, menu_plane(m), 6, 2, st->name, 8);
+    print_chars(g, menu_layer(m), 6, 2, st->name, 8);
     mn->price = st->price;
-    print_number5(g, menu_plane(m), 7, 3, mn->price);
+    print_number5(g, menu_layer(m), 7, 3, mn->price);
 }
 
-/* OrderMenu_DrawOrder: the picked order's icon (to its VRAM slot), its
- * name at (6, 5) and fee at (7, 6), and that fee as mech_order_fee. */
+/* OrderMenu_DrawOrder: the picked order's icon (to its tiles, $6A1 or
+ * view B's $6A9), its name at (6, 5) and fee at (7, 6), and that fee as
+ * mech_order_fee. */
 static void draw_order_choice(HzGame *g, HzMech *m)
 {
     HzOrderMenu *mn = &m->menu;
@@ -294,11 +313,11 @@ static void draw_order_choice(HzGame *g, HzMech *m)
     /* UNKNOWN: an order past $F would read past OrderInfo / HUDIcons; the
      * menu keeps it within 0-$F. */
     const HzOrderInfo *info = order_info_for(g, order);    /* (s. 72) */
-    put_bytes(g, (m->view == 0) ? 0xD420 : 0xD520,
+    put_tiles(g, (m->view == 0) ? 0x6A1 : 0x6A9,
               order_icon_for(g, order), HZ_ORDER_ICON_BYTES);
-    print_chars(g, menu_plane(m), 6, 5, info->name, HZ_ORDER_NAME);
+    print_chars(g, menu_layer(m), 6, 5, info->name, HZ_ORDER_NAME);
     mn->fee = info->fee;
-    print_number5(g, menu_plane(m), 7, 6, mn->fee);
+    print_number5(g, menu_layer(m), 7, 6, mn->fee);
 }
 
 /* OrderMenu_DrawOrderSel (opening): the order made one the picked type
@@ -311,7 +330,7 @@ static void draw_order_row(HzGame *g, HzMech *m)
         mn->order = next_in_mask(orders, (u8)(mn->order + 1), +1);
     }
     draw_order_choice(g, m);
-    draw_icon_cells(g, menu_plane(m), 2, 5,
+    draw_icon_cells(g, menu_layer(m), 2, 5,
                     (m->view == 0) ? 0x26A1 : 0x26A9);
 }
 
@@ -320,7 +339,7 @@ static void draw_cost(HzGame *g, HzMech *m)
 {
     HzOrderMenu *mn = &m->menu;
     mn->cost = (u16)(mn->price + mn->fee);
-    print_number5(g, menu_plane(m), 7, 8, mn->cost);
+    print_number5(g, menu_layer(m), 7, 8, mn->cost);
 }
 
 /* OrderMenu_DrawUnitCount: the units of the side the view shows at
@@ -336,7 +355,7 @@ static void draw_unit_count(HzGame *g, HzMech *m)
     u32 was = m->menu.unit_count_shown;
     m->menu.unit_count_shown = count;
     if (!units_unlimited(g) || (count < 100 && was < 100)) {
-        print_number2(g, menu_plane(m), 0x0B, 0x0B, (u8)count);
+        print_number2(g, menu_layer(m), 0x0B, 0x0B, (u8)count);
         return;
     }
     u32 v = count;
@@ -353,14 +372,14 @@ static void draw_unit_count(HzGame *g, HzMech *m)
     if (i == 2) {
         text[2] = '0';                  /* two digits at least, "07" */
     }
-    print_chars(g, menu_plane(m), 0x09, 0x0B, text, 4);
+    print_chars(g, menu_layer(m), 0x09, 0x0B, text, 4);
 }
 
 /* OrderMenu_DrawMoney: at (2, $B). */
 static void draw_money(HzGame *g, HzMech *m)
 {
     m->menu.money_shown = m->money;
-    print_number5(g, menu_plane(m), 2, 0x0B, m->money);
+    print_number5(g, menu_layer(m), 2, 0x0B, m->money);
 }
 
 /* OrderMenu_DrawRadarMode: the mode's sign at (8, $D); the radar's
@@ -370,19 +389,19 @@ static void draw_radar_mode(HzGame *g, HzMech *m)
     HzOrderMenu *mn = &m->menu;
     mn->radar_step = 0;
     mn->radar_mode_shown = mn->radar_mode;
-    put_cell(g, cell_addr(menu_plane(m), 8, 0x0D),
+    put_cell(g, cell_at(menu_layer(m), 8, 0x0D),
              font_cell((mn->radar_mode != 0) ? 0x2E : 0x2D));
 }
 
-/* OrderMenu_DrawCarriedIcon: the carried unit's order icon into its VRAM
- * slot (tile $6A5, view B $6AD). Not carrying: nothing. */
+/* OrderMenu_DrawCarriedIcon: the carried unit's order icon into its
+ * tiles ($6A5, view B's $6AD). Not carrying: nothing. */
 static void draw_carried_icon(HzGame *g, HzMech *m)
 {
     if (!carrying(m)) {
         return;
     }
     m->menu.carried_order_shown = m->carried_order;
-    put_bytes(g, (m->view == 0) ? 0xD4A0 : 0xD5A0,
+    put_tiles(g, (m->view == 0) ? 0x6A5 : 0x6AD,
               order_icon_for(g, m->carried_order), HZ_ORDER_ICON_BYTES);
 }
 
@@ -401,7 +420,7 @@ static void draw_carried_gauges(HzGame *g, HzMech *m, u8 which)
     for (int i = 0; i < 4 && !muted(g, m); i++) {
         if (which & (1u << i)) {
             hud_queue_bar(g, value[i], (max[i] > 0x14) ? 0x14 : max[i], 5,
-                          cell_addr(menu_plane(m), 0x0C, 0x13 + i));
+                          menu_layer(m), 0x0C, 0x13 + i);
         }
     }
     m->carried_refill = 0;
@@ -421,11 +440,11 @@ static void draw_carried(HzGame *g, HzMech *m)
     mn->type_shown = type;
     draw_picture(g, m, 0x0B, 0x10, type);
     draw_carried_icon(g, m);
-    u16 plane = menu_plane(m);
+    LayerId plane = menu_layer(m);
     draw_icon_cells(g, plane, 0x0E, 0x10, (m->view == 0) ? 0x26A5 : 0x26AD);
     static const char LETTERS[4] = { 'D', 'E', 'G', 'M' };
     for (int i = 0; i < 4; i++) {
-        put_cell(g, cell_addr(plane, 0x0B, 0x13 + i),
+        put_cell(g, cell_at(plane, 0x0B, 0x13 + i),
                  font_cell((u8)LETTERS[i]));
     }
     draw_carried_gauges(g, m, 0x0F);
@@ -436,7 +455,7 @@ static void draw_carried(HzGame *g, HzMech *m)
  * each price (a fixed 0, prices being in tens, and a G), the carried unit. */
 static void draw_labels(HzGame *g, HzMech *m)
 {
-    u16 plane = menu_plane(m);
+    LayerId plane = menu_layer(m);
     u8 top[16];
     u8 bottom[16];
     memset(top, 0xB5, sizeof top);
@@ -463,44 +482,43 @@ static void draw_labels(HzGame *g, HzMech *m)
 /* OrderMenu_DrawBorder: the frame round the radar (cells 1-$A, rows
  * $E-$17); carrying, a second box on its right round the carried unit
  * ($A-$11, rows $F-$17). */
-static void fill_row(HzGame *g, u16 addr, u16 word, int n)
+static void fill_row(HzGame *g, At at, u16 word, int n)
 {
-    vdp_set_write(g->vdp, VDP_VRAM, addr);
     for (int i = 0; i < n; i++) {
-        vdp_write16(g->vdp, word);
+        put_cell(g, cell_at(at.layer, at.col + i, at.row), word);
     }
 }
 
-static void fill_column(HzGame *g, u16 addr, u16 word, int n)
+static void fill_column(HzGame *g, At at, u16 word, int n)
 {
     for (int i = 0; i < n; i++) {
-        put_cell(g, (u16)(addr + i * 0x80), word);
+        put_cell(g, cell_at(at.layer, at.col, at.row + i), word);
     }
 }
 
 static void draw_border(HzGame *g, HzMech *m)
 {
     /* cmpi.b #1: only view 1 is plane B here (the rest test for 0) */
-    u16 p = (m->view == 1) ? PLANE_B : PLANE_A;
-    put_cell(g, cell_addr(p, 1, 0x0E), 0x25FC);
-    fill_row(g, cell_addr(p, 2, 0x0E), 0x25FD, 8);
-    put_cell(g, cell_addr(p, 0x0A, 0x0E), 0x2DFC);
-    fill_column(g, cell_addr(p, 0x0A, 0x0F), 0x25AD, 8);
-    put_cell(g, cell_addr(p, 0x0A, 0x17), 0x25AE);
-    fill_row(g, cell_addr(p, 2, 0x17), 0x35FD, 8);
-    put_cell(g, cell_addr(p, 1, 0x17), 0x35FC);
-    fill_column(g, cell_addr(p, 1, 0x0F), 0x2DFE, 8);
+    LayerId p = (m->view == 1) ? LAYER_B : LAYER_A;
+    put_cell(g, cell_at(p, 1, 0x0E), 0x25FC);
+    fill_row(g, cell_at(p, 2, 0x0E), 0x25FD, 8);
+    put_cell(g, cell_at(p, 0x0A, 0x0E), 0x2DFC);
+    fill_column(g, cell_at(p, 0x0A, 0x0F), 0x25AD, 8);
+    put_cell(g, cell_at(p, 0x0A, 0x17), 0x25AE);
+    fill_row(g, cell_at(p, 2, 0x17), 0x35FD, 8);
+    put_cell(g, cell_at(p, 1, 0x17), 0x35FC);
+    fill_column(g, cell_at(p, 1, 0x0F), 0x2DFE, 8);
     if (!carrying(m)) {
-        fill_column(g, cell_addr(p, 0x0A, 0x0F), 0x25FE, 8);
-        put_cell(g, cell_addr(p, 0x0A, 0x17), 0x3DFC);
+        fill_column(g, cell_at(p, 0x0A, 0x0F), 0x25FE, 8);
+        put_cell(g, cell_at(p, 0x0A, 0x17), 0x3DFC);
         return;
     }
-    put_cell(g, cell_addr(p, 0x0A, 0x0F), 0x25AC);      /* .carrying */
-    fill_row(g, cell_addr(p, 0x0B, 0x0F), 0x25FD, 6);
-    put_cell(g, cell_addr(p, 0x11, 0x0F), 0x2DFC);
-    fill_column(g, cell_addr(p, 0x11, 0x10), 0x25FE, 7);
-    put_cell(g, cell_addr(p, 0x11, 0x17), 0x3DFC);
-    fill_row(g, cell_addr(p, 0x0B, 0x17), 0x35FD, 6);
+    put_cell(g, cell_at(p, 0x0A, 0x0F), 0x25AC);      /* .carrying */
+    fill_row(g, cell_at(p, 0x0B, 0x0F), 0x25FD, 6);
+    put_cell(g, cell_at(p, 0x11, 0x0F), 0x2DFC);
+    fill_column(g, cell_at(p, 0x11, 0x10), 0x25FE, 7);
+    put_cell(g, cell_at(p, 0x11, 0x17), 0x3DFC);
+    fill_row(g, cell_at(p, 0x0B, 0x17), 0x35FD, 6);
 }
 
 /* OrderMenu_DrawSidePanels (wide screen): the patterned panels in plane A
@@ -511,7 +529,7 @@ static void draw_side_panels(HzGame *g)
     static const int COLS[2] = { 0x35, 0x13 };
     for (int s = 0; s < 2; s++) {
         for (int r = 0; r < 24; r++) {
-            put_cells(g, cell_addr(PLANE_A, COLS[s], r),
+            put_cells(g, cell_at(LAYER_A, COLS[s], r),
                       SIDE_PANEL_TILES[r % 4], 10);
         }
     }
@@ -665,28 +683,31 @@ static void radar_plot_part(HzGame *g, HzMech *m, int part)
     }
 }
 
-/* Where buffer tile n (0-63) goes in VRAM. */
-static u16 radar_tile_addr(const HzGame *g, const HzMech *m, int n)
+/* The tile buffer tile n (0-63) goes to. The radar's tiles take tile
+ * numbers whose 32 bytes are cells of the planes nothing shows while the
+ * menu is open (on the cartridge tiles and the planes' cells share VRAM):
+ * split view A's in layer A's columns 32-63, two tiles to a row of cells
+ * ($602 on); the others in layer B's rows 24-31 ($760-$77F) and the
+ * window layer's column 48 on, a tile to a row ($783 on, every fourth). */
+static u16 radar_tile_at(const HzGame *g, const HzMech *m, int n)
 {
     if (g->split_screen && m->view == 0) {
-        /* plane A's columns 32-63: two tiles to a nametable row */
-        return (u16)(0xC040 + (n / 16) * 0x400 + ((n % 16) / 2) * 0x80
-                     + (n % 2) * 0x20);
+        return (u16)(0x602 + (n / 16) * 0x20 + ((n % 16) / 2) * 4 + (n % 2));
     }
     if (n < 32) {
-        return (u16)(0xEC00 + n * 0x20);
+        return (u16)(0x760 + n);
     }
-    return (u16)(0xF060 + (n - 32) * 0x80);             /* a tile a row */
+    return (u16)(0x783 + (n - 32) * 4);
 }
 
 /* The tile number the radar's cell (col, row) shows (Radar_DrawFrame's
- * order: as radar_tile_addr put them). */
+ * order: as radar_tile_at put them). */
 static u16 radar_tile(const HzGame *g, const HzMech *m, int col, int row)
 {
-    return (u16)(radar_tile_addr(g, m, row * 8 + col) >> 5);
+    return radar_tile_at(g, m, row * 8 + col);
 }
 
-/* Radar_UploadPage: page `page`'s 16 tiles into their VRAM. */
+/* Radar_UploadPage: page `page`'s 16 tiles into place. */
 static void radar_upload_page(HzGame *g, const HzMech *m, int page)
 {
     /* the split view A path always takes buffer 1; the others take view
@@ -694,7 +715,7 @@ static void radar_upload_page(HzGame *g, const HzMech *m, int page)
     const u8 *buf = (g->split_screen && m->view != 0) ? g->radar_buf[1]
                                                       : g->radar_buf[0];
     for (int n = page * 16; n < page * 16 + 16; n++) {
-        put_bytes(g, radar_tile_addr(g, m, n), buf + n * 32, 32);
+        put_tiles(g, radar_tile_at(g, m, n), buf + n * 32, 32);
     }
 }
 
@@ -702,14 +723,14 @@ static void radar_upload_page(HzGame *g, const HzMech *m, int page)
  * at (2, $F) on the menu's plane; palette line 1 in mode 0, 0 in mode 1. */
 static void radar_draw_rows(HzGame *g, const HzMech *m, int first, int count)
 {
-    u16 plane = (g->split_screen && m->view != 0) ? PLANE_B : PLANE_A;
+    LayerId plane = (g->split_screen && m->view != 0) ? LAYER_B : LAYER_A;
     u16 pal = (m->menu.radar_mode != 0) ? 0 : 0x2000;
     for (int r = first; r < first + count; r++) {
         u16 cells[8];
         for (int c = 0; c < 8; c++) {
             cells[c] = (u16)(radar_tile(g, m, c, r) | pal);
         }
-        put_cells(g, cell_addr(plane, 2, 0x0F + r), cells, 8);
+        put_cells(g, cell_at(plane, 2, 0x0F + r), cells, 8);
     }
 }
 
@@ -941,7 +962,7 @@ static void open_clear_top(HzGame *g, HzMech *m)
                                                                     : 0);
         g->scroll_y[plane] = -0x20;
     }
-    clear_vram(g, menu_plane(m), 0x800);
+    clear_rows(g, menu_layer(m), 0);
     radar_load_page(g, m, 0);
     radar_load_page(g, m, 1);
 }
@@ -949,7 +970,7 @@ static void open_clear_top(HzGame *g, HzMech *m)
 /* OrderMenu_Open1 / Open1B: the bottom half cleared, pages 2-3 loaded. */
 static void open_clear_bottom(HzGame *g, HzMech *m)
 {
-    clear_vram(g, (u16)(menu_plane(m) + 0x800), 0x800);
+    clear_rows(g, menu_layer(m), 16);
     radar_load_page(g, m, 2);
     radar_load_page(g, m, 3);
 }
@@ -1091,14 +1112,14 @@ static void closed(HzMech *m)
 static void close_clear_top(HzGame *g, HzMech *m)
 {
     int plane = (m->view == 0) ? 0 : 1;
-    clear_vram(g, menu_plane(m), 0x800);
+    clear_rows(g, menu_layer(m), 0);
     g->scroll_x[plane] = (s16)((m->menu.scroll_x & 7) + 8);
     g->scroll_y[plane] = (s16)((m->menu.scroll_y & 7) + 8);
 }
 
 static void close_clear_bottom(HzGame *g, HzMech *m)
 {
-    clear_vram(g, (u16)(menu_plane(m) + 0x800), 0x800);
+    clear_rows(g, menu_layer(m), 16);
 }
 
 /* OrderMenu_CloseStep: mech_menu_step counts $F down. Split screen, one
@@ -1156,9 +1177,9 @@ void order_menu_update(HzGame *g)
         if (!(m->flags & MECH_MENU_OPEN)) {
             continue;
         }
-        Vdp *vdp = g->vdp;
+        Video *shown = g->video;
         if (muted(g, m)) {
-            g->vdp = &g_mute_vdp;           /* (session 59) unseen */
+            g->video = &g_mute_video;       /* (session 59) unseen */
         }
         if (m->menu.closing) {
             close_step(g, m);
@@ -1168,6 +1189,6 @@ void order_menu_update(HzGame *g)
         } else {
             open_step(g, m);
         }
-        g->vdp = vdp;
+        g->video = shown;
     }
 }

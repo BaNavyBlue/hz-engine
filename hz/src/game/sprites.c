@@ -5,14 +5,16 @@
 #include <string.h>
 
 /* The sprite pipeline: Sprites_Build fills v_sprite_list every frame,
- * Sprites_Multiplex picks the 70 entries the VDP gets this frame, and
- * VDP_UploadSprites (after the VBlank wait) writes sprites 0-9 from
- * v_sprite_fixed and DMAs the 70 behind them, plus the mechs' frames.
+ * Sprites_Multiplex picks the 70 entries shown this frame, and
+ * VDP_UploadSprites (after the VBlank wait) hands the draw layer sprites
+ * 0-9 from v_sprite_fixed and the 70 behind them, in screen pixels, and
+ * the mechs' frames.
  *
- * Sprite coordinates are the VDP's (screen + $80). All arithmetic is on
- * 68k words, so it is done in u16 and wraps as the 68k's does; the
- * unsigned compares against a width stand for the 68k's cmp.w / bcc,
- * which also reject what lies left of or above the view (negative).
+ * Sprite coordinates in the RAM list are the cartridge's (screen +
+ * $80). All arithmetic is on 68k words, so it is done in u16 and wraps
+ * as the 68k's does; the unsigned compares against a width stand for the
+ * 68k's cmp.w / bcc, which also reject what lies left of or above the
+ * view (negative).
  *
  * The 68k keeps a0 pointing at the next free list entry and
  * v_sprite_count counting them; every drawer advances both together, so
@@ -307,28 +309,25 @@ static void draw_unit(HzGame *g, HzUnit *u, const UnitView *v)
 }
 
 /* (Session 61) UNITS (g->crowd): every unit in the view is drawn and
- * none flickers. Its entries (the same three, front to back) go to
- * g->sprite_more, which the VDP draws behind its table's sprites with no
- * limit (vdp_set_more), so the table is left to the rest -- the mechs,
- * the shots, the bars, the order menu, all now in front of the units --
- * and the multiplexer has no units to share out. */
+ * none flickers. Its sprites (the same three, front to back) go to
+ * g->sprite_more, which the draw layer draws behind every other sprite
+ * with no limit (video_sprites_behind), so the 80 are left to the rest --
+ * the mechs, the shots, the bars, the order menu, all now in front of the
+ * units -- and the multiplexer has no units to share out. */
 static void more_add(HzGame *g, u16 y, u16 size_link, u16 attr, u16 x)
 {
     HzSpriteMore *l = &g->sprite_more;
     if (l->count == l->cap) {
         u32 cap = l->cap ? l->cap * 2 : 1024;
-        HzSprite *s = realloc(l->sprite, cap * sizeof *s);
+        Sprite *s = realloc(l->sprite, cap * sizeof *s);
         if (s == NULL) {
             return;                     /* out of memory: not drawn */
         }
         l->sprite = s;
         l->cap = cap;
     }
-    HzSprite *s = &l->sprite[l->count++];
-    s->y = y;
-    s->size_link = size_link;
-    s->attr = attr;
-    s->x = x;
+    const HzSprite r = { y, size_link, attr, x };
+    l->sprite[l->count++] = sprite_from_ram(&r);
 }
 
 static void draw_unit_more(HzGame *g, HzUnit *u, const UnitView *v)
@@ -707,68 +706,74 @@ void sprites_multiplex(HzGame *g)
     g->sprite_mux_phase = (phase > 0x0B) ? 0 : phase;
 }
 
-#define MECH_FRAMES_ROM 0x010000u    /* MechFrames: 64 x $200 */
-
-/* A 68k-to-VRAM DMA as VDP_UploadSprites programs it: length (words) in
- * registers 19-20, source address / 2 in 21-23, then the command with the
- * DMA bit. `src_addr` is the 68k address (for the registers); the data
- * comes from `src`. */
-static void dma_to_vram(Vdp *v, u32 src_addr, const u8 *src, u16 words,
-                        u16 reg23, u32 cmd)
+/* A sprite in the cartridge's RAM format as the draw layer's: its words'
+ * 9 bits of position less the 128 of the border, its size, its cell word
+ * and (session 72) its colour table. */
+Sprite sprite_from_ram(const HzSprite *s)
 {
-    u32 s = src_addr >> 1;
-    vdp_reg(v, (u16)(0x9300 | (words & 0xFF)));
-    vdp_reg(v, (u16)(0x9400 | (words >> 8)));
-    vdp_reg(v, (u16)(0x9500 | (s & 0xFF)));
-    vdp_reg(v, (u16)(0x9600 | ((s >> 8) & 0xFF)));
-    vdp_reg(v, reg23);
-    vdp_command(v, cmd);
-    vdp_write_bytes(v, src, (u32)words * 2);
+    Sprite o;
+    Cell c = cell_from_word(s->attr);
+    o.x = (s16)((s->x & 0x1FF) - 128);
+    o.y = (s16)((s->y & 0x1FF) - 128);
+    o.tile = c.tile;
+    o.w = (u8)(((s->size_link >> 10) & 3) + 1);
+    o.h = (u8)(((s->size_link >> 8) & 3) + 1);
+    o.pal = c.pal;
+    o.prio = c.prio;
+    o.flip_h = c.flip_h;
+    o.flip_v = c.flip_v;
+    o.colours = (u8)(s->size_link >> 12);
+    return o;
 }
 
-/* VDP_UploadSprites ($53D2), after the VBlank wait with the display off.
- * Sprites 0-9 from v_sprite_fixed by CPU, with sprite 5's link cut in the
- * RAM copy first when v_hud_sprite_cut is set (every game: VDP_Init sets
- * it), so the VDP stops at sprite 5 until HBlank writes the word
- * Sprites_Build left (v_sprite5_link_next, copied to v_sprite5_link)
- * after line 30. Then the 70-entry window by DMA to $D050 (sprites $A up),
- * and each mech's frame (16 tiles, MechFrames + frame x $200) to VRAM
- * $4000 / $4200 when mech_frame isn't what was sent last. */
-void vdp_upload_sprites(HzGame *g)
+/* One more sprite of the frame's, under those before it. */
+bool sprites_show_one(HzGame *g, const HzSprite *s)
 {
-    Vdp *v = g->vdp;
+    Sprite o = sprite_from_ram(s);
+    return video_sprite_push(g->video, &o);
+}
 
-    vdp_command(v, 0x50000003);                         /* $D000 */
+/* VDP_UploadSprites ($53D2), after the VBlank wait with the display off:
+ * the frame's sprites to the draw layer, in the order the cartridge's
+ * sprite table draws them -- sprites 0-9 from v_sprite_fixed, then the
+ * 70-entry window (sprites $A up), each entry naming the next by its link
+ * byte. Sprite 5's link is cut in the RAM copy first when
+ * v_hud_sprite_cut is set (every game: VDP_Init sets it): the sprites
+ * after it, the game's, are held back until HBlank writes back the word
+ * Sprites_Build left (v_sprite5_link_next, copied to v_sprite5_link)
+ * after line 30. (Session 61) UNITS' units behind them. And each mech's
+ * frame (16 tiles, MechFrames + frame x $200) to its tiles ($200, $210)
+ * when mech_frame isn't what was sent last. */
+void sprites_upload(HzGame *g)
+{
+    Video *v = g->video;
     if (g->hud_sprite_cut) {
         g->sprite_fixed[5].size_link &= 0xFF00;
     }
-    for (int i = 0; i < 10; i++) {
-        const HzSprite *s = &g->sprite_fixed[i];
-        vdp_write16(v, s->y);
-        vdp_write16(v, s->size_link);
-        vdp_write16(v, s->attr);
-        vdp_write16(v, s->x);
-    }
     g->sprite5_link = g->sprite5_link_next;
 
-    /* The window, as the 68k's RAM holds it: big-endian words. */
-    u8 bytes[HZ_SPRITE_WINDOW * 8];
-    const HzSprite *w = &g->sprite_list[g->sprite_window];
-    for (int i = 0; i < HZ_SPRITE_WINDOW; i++) {
-        const u16 words[4] = { w[i].y, w[i].size_link, w[i].attr, w[i].x };
-        for (int k = 0; k < 4; k++) {
-            bytes[i * 8 + k * 2] = (u8)(words[k] >> 8);
-            bytes[i * 8 + k * 2 + 1] = (u8)words[k];
+    video_sprites_begin(v);
+    int at = 0;
+    for (int n = 0; n < VIDEO_SPRITES; n++) {
+        const HzSprite *s = (at < HZ_SPRITE_FIXED)
+            ? &g->sprite_fixed[at]
+            : &g->sprite_list[g->sprite_window + at - HZ_SPRITE_FIXED];
+        sprites_show_one(g, s);
+        u16 link = s->size_link;
+        if (at == 5) {
+            video_sprites_game(v);
+            if (g->hud_sprite_cut) {
+                link = g->sprite5_link;     /* as HBlank puts it back */
+            }
         }
+        link &= 0x7F;
+        if (link == 0 || link >= VIDEO_SPRITES) {
+            break;
+        }
+        at = link;
     }
-    vdp_reg(v, 0x8134);                         /* display off, DMA on */
-    u32 ram = 0xFF8064u + (u32)g->sprite_window * 8;    /* v_sprite_list */
-    dma_to_vram(v, ram, bytes, 0x118, 0x977F, 0x50500083);
-    /* (Session 61) UNITS: the units, behind, from the window's first
-     * sprite ($A) on, which the HUD strip's cut link keeps off its lines.
-     * Off: none. */
-    vdp_set_more(v, g->sprite_more.sprite, g->sprite_more.count,
-                 HZ_SPRITE_FIXED);
+    video_sprites_hold(v, g->hud_sprite_cut != 0);
+    video_sprites_behind(v, g->sprite_more.sprite, g->sprite_more.count);
 
     for (int p = 0; p < 2; p++) {
         HzMech *m = &g->mech[p];
@@ -776,15 +781,13 @@ void vdp_upload_sprites(HzGame *g)
             continue;
         }
         m->frame_loaded = m->frame;
-        /* The DMA's source registers get the frame's ROM address; the
-         * data is the assets' copy of MechFrames. No mech frame past $3F
-         * is ever set (robot $00-$2F, MechJetFrames + 5 at most $39, the
-         * transform tables $3A-$3F); the 68k would send whatever follows
-         * MechFrames in the ROM, the port frame & $3F. */
+        /* No mech frame past $3F is ever set (robot $00-$2F, MechJetFrames
+         * + 5 at most $39, the transform tables $3A-$3F); the 68k would
+         * send whatever follows MechFrames in the ROM, the port frame &
+         * $3F. */
         u16 f = (u16)(m->frame & 0xFF);
-        u32 src = MECH_FRAMES_ROM + (u32)(f << 9);
-        dma_to_vram(v, src, g->assets->mech_frames[f & (HZ_MECH_FRAMES - 1)],
-                    0x100, 0x9700, p == 0 ? 0x40000081 : 0x42000081);
+        video_load_tiles(v, p == 0 ? 0x200 : 0x210,
+                         g->assets->mech_frames[f & (HZ_MECH_FRAMES - 1)],
+                         HZ_MECH_FRAME_BYTES / TILE_BYTES);
     }
-    vdp_reg(v, 0x8124);
 }

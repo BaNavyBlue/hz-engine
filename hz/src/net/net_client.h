@@ -51,8 +51,13 @@
  * REPAIR patch, the fixes' bit 10. 11 (session 75): the PIXELS patch, the
  * fixes' bit 11. 12 (session 78): no frame changed, but the assets' hash
  * did -- a PNG hashed by its picture, not its bytes (hz_file.h) -- so a
- * build of 11 and one of 12 would never agree on `game` anyway. */
-#define NET_GAME_CODE 12
+ * build of 11 and one of 12 would never agree on `game` anyway. 13
+ * (session 79): no frame changed, but the display a split-screen game
+ * hashes did: the draw layer (docs/hackable.md, step 1) loads tiles and
+ * clears the screen without DMA, so the VDP's DMA registers (19-23) no
+ * longer hold what those uploads left, and the layer's own store (half B)
+ * changes it again. */
+#define NET_GAME_CODE 13
 
 #define NET_RING       256      /* frames of pads kept a side */
 #define NET_HASH_EVERY 60       /* a state hash a second */

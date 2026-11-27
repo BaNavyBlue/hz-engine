@@ -75,6 +75,7 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import hzlayer                                          # noqa: E402
 import m68k                                             # noqa: E402
 import m68krun                                          # noqa: E402
 
@@ -173,6 +174,7 @@ class Vdp:
         self.addr = 0
         self.fill = False
         self.read16 = read16
+        self.held = hzlayer.Held()
 
     def store(self, w):
         a = self.addr
@@ -189,6 +191,8 @@ class Vdp:
             a &= 0xFFFE
             self.vram[a] = w >> 8
             self.vram[a + 1] = w & 0xFF
+            self.held.wrote(a)
+            self.held.wrote(a + 1)
         self.addr = (self.addr + self.regs[15]) & 0xFFFF
 
     def control(self, w):
@@ -203,6 +207,8 @@ class Vdp:
             r = (w >> 8) & 0x1F
             if r < 24:
                 self.regs[r] = w & 0xFF
+                if r == 5:
+                    self.held.table(w & 0xFF)
             return
         self.pending = w
 
@@ -216,6 +222,7 @@ class Vdp:
             src = r[21] | (r[22] << 8)
             for _ in range(n or 0x10000):
                 self.vram[self.addr] = self.vram[src]
+                self.held.wrote(self.addr)
                 src = (src + 1) & 0xFFFF
                 self.addr = (self.addr + r[15]) & 0xFFFF
         else:
@@ -233,6 +240,7 @@ class Vdp:
             inc = self.regs[15] or 1
             for _ in range(n + 1):
                 self.vram[a & 0xFFFF] = (w >> 8) & 0xFF
+                self.held.wrote(a & 0xFFFF)
                 a += inc
             self.addr = a & 0xFFFF
             return
@@ -389,14 +397,17 @@ class Cpu(m68krun.M68k):
 
     # -- frames -----------------------------------------------------------------
     def frame(self):
+        v = self.vdp
+        cut = hzlayer.link5(v.vram, v.regs[5]) == 0
         self.event(4)
         self.flush_cmd()
-        v = self.vdp
         vs = b''.join(w.to_bytes(2, 'big') for w in v.vsram)
         k = len(self.frames)
-        f = 'F %d %08X %s %08X %s' % (
-            k, crc(v.vram), ''.join('%03X' % (c & 0x0EEE) for c in v.cram),
-            crc(vs), ''.join('%02X' % r for r in v.regs[:19]))
+        f = 'F %d %08X %s %08X %s %08X' % (
+            k, v.held.crc(v.vram),
+            ''.join('%03X' % (c & 0x0EEE) for c in v.cram),
+            crc(vs), ''.join('%02X' % r for r in v.regs[:19]),
+            hzlayer.sprites_crc(v.vram, v.regs[5], cut))
         r = 'R %d %08X %08X %08X %08X %08X %08X' % ((k,) + self.state_crcs())
         self.frames.append((f, r))
         self.pad = self.pads[k] if k < len(self.pads) else 0
@@ -406,7 +417,7 @@ class Cpu(m68krun.M68k):
                 k >= len(self.expect) or self.expect[k][0] != f
                 or (self.started and self.expect[k][1] != r)):
             self.mismatch = k
-            self.dump = self.state_images() + bytes(v.vram)
+            self.dump = self.state_images() + bytes(v.held.vram(v.vram))
             raise Stop()
         if len(self.frames) >= self.limit:
             self.how = 'frames'
@@ -709,6 +720,8 @@ def describe_frame(ours, theirs, started=True):
         what.append('registers %s (port %s, original %s)' % (
             ra, [o[5][i * 2:i * 2 + 2] for i in ra],
             [t[5][i * 2:i * 2 + 2] for i in ra]))
+    if o[6] != t[6]:
+        what.append('sprites as drawn')
     names = ('globals', 'mechs', 'units', 'posts', 'grid', 'shots')
     if not started:
         names = ()

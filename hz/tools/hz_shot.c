@@ -91,7 +91,7 @@
  * (game_frame_end). The menus, sound, the units' updates and the attract
  * demo aren't ported yet. */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/core/pngwrite.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
@@ -152,11 +152,16 @@ static void put16(FILE *f, u16 v)
     fputc(v & 0xFF, f);
 }
 
-static bool write_png(const char *path, const Vdp *v, const u8 *idx)
+/* (Half B of docs/hackable.md's step 1) The planes and scroll a raw
+ * frame carries for the pans' check are the cartridge's VRAM, laid out
+ * from the draw layer's changes by tools/video_vdp.c. */
+static VideoVdp g_cart;
+
+static bool write_png(const char *path, const Video *v, const u8 *idx)
 {
     static u8 rgb[SCREEN_W * SCREEN_H * 3];
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        vdp_cram_rgb(v->cram[idx[i] & 63], rgb + i * 3);
+        cram_rgb(v->colours[idx[i] & 63], rgb + i * 3);
     }
     return png_write(path, SCREEN_W, SCREEN_H, 8, 2, rgb, SCREEN_W * 3,
                      NULL, 0, NULL);
@@ -222,11 +227,11 @@ static bool write_raw(const char *path, const Shot *s, const Vdp *v)
 static void on_frame(HzGame *g, void *user)
 {
     Shot *s = user;
-    vdp_render(g->vdp, s->idx);
+    video_compose(g->video, s->idx);
     if (s->raw_dir != NULL) {
         char path[1024];
         snprintf(path, sizeof path, "%s/f%04d.raw", s->raw_dir, s->raw_no++);
-        if (!write_raw(path, s, g->vdp)) {
+        if (!write_raw(path, s, g_cart.vdp)) {
             fprintf(stderr, "hz_shot: can't write %s (does %s exist?); "
                             "no more raw frames\n", path, s->raw_dir);
             s->raw_dir = NULL;
@@ -236,7 +241,7 @@ static void on_frame(HzGame *g, void *user)
         char path[1024];
         snprintf(path, sizeof path, "%s/f%04d.png", s->frames_dir,
                  s->frame_no);
-        if (!write_png(path, g->vdp, s->idx)) {
+        if (!write_png(path, g->video, s->idx)) {
             fprintf(stderr, "hz_shot: can't write %s (does %s exist?); "
                             "no more frames\n", path, s->frames_dir);
             s->frames_dir = NULL;
@@ -668,10 +673,13 @@ int main(int argc, char **argv)
     shot.mode = mode;
     shot.difficulty = difficulty;
 
+    static Video video;
     static Vdp vdp;
     static HzGame game;
+    video_init(&video);
     vdp_reset(&vdp);
-    game_init(&game, &assets, &vdp);
+    video_vdp_watch(&g_cart, &video, &vdp);
+    game_init(&game, &assets, &video);
     game.units_frozen = true;       /* the view model doesn't follow the
                                        unit AI */
     game.cpus_frozen = true;   /* nor the CPU mechs' AI (make mechai) */
@@ -706,12 +714,12 @@ int main(int argc, char **argv)
         pan_frame(&game, &shot, pan, f, &si);
     }
 
-    /* The next frame as far as it is ported: what is on the VDP now, with
-     * HBlank's relink (VDP_WaitVBlank hands it to on_frame). */
+    /* The next frame as far as it is ported: what the draw layer holds now,
+     * with HBlank's relink (VDP_WaitVBlank hands it to on_frame). */
     game_wait_vblank(&game);
 
     int rc = 0;
-    if (!write_png(out_path, &vdp, shot.idx)) {
+    if (!write_png(out_path, &video, shot.idx)) {
         fprintf(stderr, "hz_shot: can't write %s\n", out_path);
         rc = 1;
     }

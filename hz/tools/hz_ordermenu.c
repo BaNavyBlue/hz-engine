@@ -24,7 +24,7 @@
  * module reads or writes, at the original's addresses (the rest of RAM is
  * 0). */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 
@@ -66,6 +66,14 @@ static void wr32(u8 *r, u32 a, u32 v)
 static u32 vram_write(u16 addr)
 {
     return 0x40000000u | ((u32)(addr & 0x3FFF) << 16) | (u32)(addr >> 14);
+}
+
+/* A bar's first cell as the 68k keeps it: its VRAM address in the game's
+ * layout (layer B $E000, A $C000, the window $F000). */
+static u16 bar_vram(const HzGaugeBar *b)
+{
+    static const u16 BASE[LAYER_COUNT] = { 0xE000, 0xC000, 0xF000 };
+    return (u16)(BASE[b->layer] + b->row * 0x80 + b->col * 2);
 }
 
 static void store_mech(const HzMech *m, u8 *r)
@@ -172,7 +180,7 @@ static void store(const HzGame *g, u8 *ram)
         const HzGaugeBar *b = &g->gauge_queue[i];
         u32 a = (u32)(A_GAUGE_QUEUE + i * 0x26);
         wr16(ram, a, b->last);
-        wr32(ram, a + 2, vram_write(b->addr));
+        wr32(ram, a + 2, vram_write(bar_vram(b)));
         for (int k = 0; k < HZ_GAUGE_CELLS; k++) {
             wr16(ram, (u32)(a + 6 + k * 2), b->cells[k]);
         }
@@ -390,12 +398,19 @@ static void poke_mech(HzGame *g, int p)
     m->pad_prev = random_pad_bits();
 }
 
+/* (Half B of docs/hackable.md's step 1) The cartridge's VRAM, laid out
+ * from the draw layer's changes by tools/video_vdp.c. */
+static VideoVdp g_cart;
+static Video g_video;
+
 /* One case: a game played a while, then the pokes. */
 static bool make_case(HzGame *g, const HzAssets *assets, Vdp *vdp)
 {
     static const u8 MODES[] = { 0, 1, 2, 5, 6 };
+    video_init(&g_video);
     vdp_reset(vdp);
-    game_init(g, assets, vdp);
+    video_vdp_watch(&g_cart, &g_video, vdp);
+    game_init(g, assets, &g_video);
     g->frame = frame_hook;
     g->options[0] = MODES[rnd(5)];
     g->options[1] = (u8)rnd(4);

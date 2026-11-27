@@ -4609,7 +4609,7 @@ static int drive_setup(Nm *n, int gx, int gy, bool nest, u32 salt)
     }
     HzGame *c = g_drive_game;
     game_copy(c, n->g);
-    c->vdp = NULL;                  /* units never draw */
+    c->video = NULL;                /* units never draw */
     c->frame = NULL;
     c->unit_ai_probe = NULL;
     c->combat_probe = NULL;
@@ -9048,7 +9048,7 @@ void nightmare_think(HzGame *g, int p)
 /* The copy run ahead, and where it is. */
 typedef struct {
     HzGame          game;
-    Vdp             vdp;
+    Video           video;      /* what the copy draws: never shown */
     int             p;
     int             ahead;
     int             at;         /* passes ended in the copy */
@@ -9115,8 +9115,8 @@ u8 nightmare_think_ahead(HzGame *g, int p, int ahead, const u8 *const pads[2])
     Ahead *a = g_ahead;
     HzGame *c = &a->game;
     game_copy(c, g);
-    vdp_copy(&a->vdp, g->vdp);
-    c->vdp = &a->vdp;           /* the copy draws on its own */
+    c->video = &a->video;       /* the copy draws on its own (nothing in
+                                   the game reads the layer back) */
     c->frame = ahead_frame;
     c->frame_user = a;
     c->mech_probe = ahead_mech;

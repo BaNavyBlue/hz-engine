@@ -20,41 +20,32 @@ HzMapFx *mapfx_alloc(HzGame *g)
     return NULL;
 }
 
-/* MapFx_DrawBlock ($6B5A): the block's 4 x 4 nametable words from VDP
- * command `cmd`, each cell's command written before it; along a row the
- * column wraps in the plane's 64 cells (& $7E, the row's base kept), and
- * each row is $80 bytes on, wrapping in the 32 rows (& $6FFE). As the view
- * drawers: & $19FF, priority on tiles below $40. */
-static void mapfx_draw_block(HzGame *g, const u16 *tiles, u32 cmd)
+/* MapFx_DrawBlock ($6B5A): the block's 4 x 4 cells from cell (col, row) of
+ * the layer, the column wrapping round the layer's 64 and the row round
+ * its 32. As the view drawers: & $19FF, priority on tiles below $40. */
+static void mapfx_draw_block(HzGame *g, const u16 *tiles, LayerId layer,
+                             int col, int row)
 {
     for (int r = 0; r < 4; r++) {                       /* .row */
-        u32 c = cmd;
-        u16 base = (u16)((c >> 16) & 0xFF80);
         for (int k = 0; k < 4; k++) {                   /* .cell */
-            vdp_command(g->vdp, c);
             u16 w = (u16)(*tiles++ & 0x19FF);
             if ((w & 0x1FF) < 0x40) {
                 w |= 0x8000;
             }
-            vdp_write16(g->vdp, w);                     /* .store */
-            u16 hi = (u16)((((c >> 16) + 2) & 0x7E) | base);
-            c = ((u32)hi << 16) | (c & 0xFFFF);
+            video_set_word(g->video, layer, col + k, row + r, w);  /* .store */
         }
-        u16 hi = (u16)((((cmd >> 16) + 0x80)) & 0x6FFE);
-        cmd = ((u32)hi << 16) | (cmd & 0xFFFF);
     }
 }
 
 /* Where a block at map tile (tx, ty) (block-aligned) falls in a view with
- * camera `cam` and plane scroll (sx, sy): columns from the camera's tile
+ * camera `cam` and layer scroll (sx, sy): columns from the camera's tile
  * (camera + 4) / 8, shown when -4 <= dx < width - 4 (unsigned, as the
- * 68k's `+ 4`, `cmp`); rows when -4 <= dy < $18. The plane cell: column dx
- * + (sx + 4) / 8 (& $3F), row dy + 4 + (sy + 4) / 8 (& $1F): the row
- * keeps the + 4 of its test (the column's is taken off again). Returns
- * false when the block is off the view; else the VDP command `plane` with
- * the cell's offset (& $FFE). */
-static bool mapfx_view_cmd(u16 tx, u16 ty, const HzPoint *cam, s16 sx,
-                           s16 sy, u16 width, u32 plane, u32 *cmd)
+ * 68k's `+ 4`, `cmp`); rows when -4 <= dy < $18. The cell: column dx +
+ * (sx + 4) / 8 (& $3F), row dy + 4 + (sy + 4) / 8 (& $1F): the row keeps
+ * the + 4 of its test (the column's is taken off again). Returns false
+ * when the block is off the view. */
+static bool mapfx_view_cell(u16 tx, u16 ty, const HzPoint *cam, s16 sx,
+                            s16 sy, u16 width, int *cell_col, int *cell_row)
 {
     u16 col = (u16)(tx - ((u16)(cam->x + 4) >> 3) + 4);
     if (col >= width) {
@@ -65,10 +56,8 @@ static bool mapfx_view_cmd(u16 tx, u16 ty, const HzPoint *cam, s16 sx,
     if (row >= 0x1C) {
         return false;
     }
-    col = (u16)(((col + ((u16)(sx + 4) >> 3)) & 0x3F) * 2);
-    row = (u16)(((row + ((u16)(sy + 4) >> 3)) & 0x1F) << 7);
-    u16 ofs = (u16)((col + row) & 0xFFE);
-    *cmd = plane | ((u32)ofs << 16);
+    *cell_col = (col + ((u16)(sx + 4) >> 3)) & 0x3F;
+    *cell_row = (row + ((u16)(sy + 4) >> 3)) & 0x1F;
     return true;
 }
 
@@ -110,18 +99,18 @@ void map_fx_update(HzGame *g)
         *lw = (u16)((*lw & 0xFE00) | block);
         const u16 *tiles = g->blocks[block];
 
-        u32 cmd;
-        if (!skip_a && mapfx_view_cmd(tx, ty, g->view_camera[0],
-                                      g->scroll_x[0], g->scroll_y[0],
-                                      width, 0x40000003u, &cmd)) {
-            mapfx_draw_block(g, tiles, cmd);
+        int col, row;
+        if (!skip_a && mapfx_view_cell(tx, ty, g->view_camera[0],
+                                       g->scroll_x[0], g->scroll_y[0],
+                                       width, &col, &row)) {
+            mapfx_draw_block(g, tiles, LAYER_A, col, row);
         }
         if (!skip_b) {                                  /* .view_b */
             int s = g->split_screen ? 1 : 0;            /* .b_plane_set */
-            u32 plane = g->split_screen ? 0x60000003u : 0x40000003u;
-            if (mapfx_view_cmd(tx, ty, g->view_camera[1], g->scroll_x[s],
-                               g->scroll_y[s], width, plane, &cmd)) {
-                mapfx_draw_block(g, tiles, cmd);
+            LayerId layer = g->split_screen ? LAYER_B : LAYER_A;
+            if (mapfx_view_cell(tx, ty, g->view_camera[1], g->scroll_x[s],
+                                g->scroll_y[s], width, &col, &row)) {
+                mapfx_draw_block(g, tiles, layer, col, row);
             }
         }
 

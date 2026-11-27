@@ -61,21 +61,14 @@ void map_scan_outposts(HzGame *g)
     }
 }
 
-/* The planes' VRAM: 64 x 32 cells each, a row $80 bytes. */
-#define PLANE_A  0xC000u
-#define PLANE_B  0xE000u
-#define HSCROLL  0xD400u    /* the H scroll table */
-
-#define PLANE_COLS 64
-#define PLANE_ROWS 32
+/* The views' layers: view A is layer A, view B layer B (src/core/video.h),
+ * 64 x 32 cells each; a cell's column and row wrap round the layer. */
 #define HUD_ROWS   4        /* the HUD strip over every view */
+#define VIEW_B_X   0xB0     /* view B's left edge on the screen */
 
-/* A plane cell's VRAM address; the column and the row wrap round the
- * plane. */
-static u16 cell_addr(u16 plane, int col, int row)
+static LayerId view_layer(int plane)
 {
-    return (u16)(plane + ((row & (PLANE_ROWS - 1)) << 7)
-                 + ((col & (PLANE_COLS - 1)) << 1));
+    return plane ? LAYER_B : LAYER_A;
 }
 
 /* The plane cell under view position (x, y): its column and row there,
@@ -131,15 +124,14 @@ static u16 map_cell(const HzGame *g, u16 col, u16 row)
  * row) into a plane from cell (pcol, prow), wrapping round the plane's
  * 64 x 32 cells and the map's 256 x 256 tiles. (The 68k steps through the
  * layout and the block a tile at a time; the cells are the same.) */
-static void draw_block_rect(HzGame *g, u16 plane, int pcol, int prow,
+static void draw_block_rect(HzGame *g, LayerId layer, int pcol, int prow,
                             u16 col, u16 row, int cols, int rows)
 {
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
-            vdp_set_write(g->vdp, VDP_VRAM,
-                          cell_addr(plane, pcol + c, prow + r));
-            vdp_write16(g->vdp, map_cell(g, (u16)((col + c) & 0xFF),
-                                         (u16)((row + r) & 0xFF)));
+            video_set_word(g->video, layer, pcol + c, prow + r,
+                           map_cell(g, (u16)((col + c) & 0xFF),
+                                    (u16)((row + r) & 0xFF)));
         }
     }
 }
@@ -151,7 +143,7 @@ static void draw_block_rect(HzGame *g, u16 plane, int pcol, int prow,
 static void draw_view(HzGame *g, int plane, const HzPoint *cam, int cols)
 {
     reset_scroll(g, plane);
-    draw_block_rect(g, plane ? PLANE_B : PLANE_A,
+    draw_block_rect(g, view_layer(plane),
                     view_col((s16)(g->scroll_x[plane] - 8)),
                     view_row((s16)(g->scroll_y[plane] - 8)),
                     camera_tile(cam->x), camera_tile(cam->y), cols, 26);
@@ -227,7 +219,7 @@ static void queue_row(HzGame *g, int plane, s16 edge, const HzPoint *cam,
 {
     HzScrollQueue *q = &g->row_queue[plane];
     g->scroll_queued[plane ? Q_ROW_B : Q_ROW_A] = 1;
-    q->plane = plane ? PLANE_B : PLANE_A;
+    q->layer = view_layer(plane);
     q->col = (u8)view_col((s16)(g->scroll_x[plane] - 8));
     q->row = (u8)view_row((s16)(g->scroll_y[plane] + edge));
     q->last = (u16)(cells - 1);
@@ -247,7 +239,7 @@ static void queue_column(HzGame *g, int plane, s16 edge, const HzPoint *cam)
 {
     HzScrollQueue *q = &g->col_queue[plane];
     g->scroll_queued[plane ? Q_COL_B : Q_COL_A] = 1;
-    q->plane = plane ? PLANE_B : PLANE_A;
+    q->layer = view_layer(plane);
     q->col = (u8)view_col((s16)(g->scroll_x[plane] + edge));
     q->row = (u8)view_row((s16)(g->scroll_y[plane] - 8));
     q->last = 26 - 1;
@@ -338,61 +330,53 @@ void map_scroll_update(HzGame *g)
 
 /* Map_FlushRowA/B's cells ($6856): rightwards, the column wrapping round
  * the plane row. */
-static void flush_row(Vdp *v, const HzScrollQueue *q)
+static void flush_row(HzGame *g, const HzScrollQueue *q)
 {
     for (int i = 0; i <= q->last; i++) {
-        vdp_set_write(v, VDP_VRAM, cell_addr(q->plane, q->col + i, q->row));
-        vdp_write16(v, q->cells[i]);
+        video_set_word(g->video, (LayerId)q->layer, q->col + i, q->row,
+                       q->cells[i]);
     }
 }
 
 /* Map_FlushColA/B's cells ($6884): downwards, the row wrapping round the
  * plane. */
-static void flush_column(Vdp *v, const HzScrollQueue *q)
+static void flush_column(HzGame *g, const HzScrollQueue *q)
 {
     for (int i = 0; i <= q->last; i++) {
-        vdp_set_write(v, VDP_VRAM, cell_addr(q->plane, q->col, q->row + i));
-        vdp_write16(v, q->cells[i]);
+        video_set_word(g->video, (LayerId)q->layer, q->col, q->row + i,
+                       q->cells[i]);
     }
 }
 
-/* Map_FlushScroll ($67F2): the scroll registers, then whatever
- * Map_ScrollUpdate queued. H scroll is the negated view scroll, plane
- * B's offset $B0 to the right (it shows through the window's right-hand
- * side). Plane B's row is followed by a whole plane row of blank cells
- * (Map_FlushRowB), its column by a whole plane column (Map_FlushColB:
- * the 68k writes it with the auto-increment at $80, then puts it back to
- * 2). */
+/* Map_FlushScroll ($67F2): the views' scroll, then whatever
+ * Map_ScrollUpdate queued. View B is VIEW_B_X to the right on the screen
+ * (it shows on view B's side, through the window layer's clear cells).
+ * Layer B's row is followed by a whole layer row of clear cells
+ * (Map_FlushRowB), its column by a whole column (Map_FlushColB). */
 void map_flush_scroll(HzGame *g)
 {
-    Vdp *v = g->vdp;
-    vdp_set_write(v, VDP_VRAM, HSCROLL);
-    vdp_write16(v, (u16)-g->scroll_x[0]);
-    vdp_write16(v, (u16)(-g->scroll_x[1] + 0xB0));
-    vdp_set_write(v, VDP_VSRAM, 0);
-    vdp_write16(v, (u16)g->scroll_y[0]);
-    vdp_write16(v, (u16)g->scroll_y[1]);
+    Video *v = g->video;
+    video_scroll(v, LAYER_A, g->scroll_x[0], g->scroll_y[0]);
+    video_scroll(v, LAYER_B, g->scroll_x[1] - VIEW_B_X, g->scroll_y[1]);
 
     if (g->scroll_queued[Q_ROW_A]) {
-        flush_row(v, &g->row_queue[0]);                 /* Map_FlushRowA */
+        flush_row(g, &g->row_queue[0]);                 /* Map_FlushRowA */
     }
     if (g->scroll_queued[Q_COL_A]) {
-        flush_column(v, &g->col_queue[0]);              /* Map_FlushColA */
+        flush_column(g, &g->col_queue[0]);              /* Map_FlushColA */
     }
     if (g->scroll_queued[Q_ROW_B]) {
         const HzScrollQueue *q = &g->row_queue[1];
-        flush_row(v, q);                                /* Map_FlushRowB */
+        flush_row(g, q);                                /* Map_FlushRowB */
         for (int col = 0; col < PLANE_COLS; col++) {
-            vdp_set_write(v, VDP_VRAM, cell_addr(PLANE_B, col, q->clear));
-            vdp_write16(v, 0);
+            video_set_word(v, LAYER_B, col, q->clear, 0);
         }
     }
     if (g->scroll_queued[Q_COL_B]) {
         const HzScrollQueue *q = &g->col_queue[1];
-        flush_column(v, q);                             /* Map_FlushColB */
+        flush_column(g, q);                             /* Map_FlushColB */
         for (int row = 0; row < PLANE_ROWS; row++) {
-            vdp_set_write(v, VDP_VRAM, cell_addr(PLANE_B, q->clear, row));
-            vdp_write16(v, 0);
+            video_set_word(v, LAYER_B, q->clear, row, 0);
         }
     }
 }
@@ -421,7 +405,7 @@ void map_redraw_view_rows(HzGame *g, const HzMech *m, int first_row, int rows)
         cols = 42;
     }
     u16 row = (u16)((((u16)(g->camera[cam].y - 8) >> 3) + first_row) & 0xFF);
-    draw_block_rect(g, plane ? PLANE_B : PLANE_A,
+    draw_block_rect(g, view_layer(plane),
                     view_col((s16)(g->scroll_x[plane] - 8)),
                     view_row((s16)(g->scroll_y[plane] - 8)) + first_row,
                     camera_tile(g->camera[cam].x), row, cols, rows);

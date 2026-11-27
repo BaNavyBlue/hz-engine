@@ -50,7 +50,7 @@ void unit_set_sprite(HzGame *g, HzUnit *u, u16 pal)
     bool repair = repair_on(g);
     if (!unit_on_foot(u->type, repair)) {
         /* (session 72) the repair truck: the SUPPLY's sprites (in its own
-         * colours: its sprite size's high bits, hz_vdp.h) */
+         * colours: its sprite size's high bits, video.h) */
         u8 row = (repair && u->type == UNIT_REPAIR) ? UNIT_SUPPLY : u->type;
         u->sprite_attr = (u16)(dir_table[row][u->dir] | pal);
     } else {
@@ -315,15 +315,15 @@ const u8 *order_icon_for(const HzGame *g, u8 order)
     return g->assets->order_icons[order & 0x0F];
 }
 
-/* (Session 72) The VDP's colour tables 1 and 2, the truck's and the
- * mechanic's sprites' (their sprite sizes' high bits name them), on while
- * the game has REPAIR and off otherwise. */
+/* (Session 72) The draw layer's sprite colour tables 1 and 2, the
+ * truck's and the mechanic's sprites' (their sprite sizes' high bits name
+ * them), on while the game has REPAIR and off otherwise. */
 void repair_set_colours(HzGame *g)
 {
     bool on = repair_on(g);
     for (int i = 0; i < 2; i++) {
-        vdp_set_colours(g->vdp, i + 1,
-                        on ? g->assets->repair.colours[i] : NULL);
+        video_sprite_colours(g->video, i + 1,
+                             on ? g->assets->repair.colours[i] : NULL);
     }
 }
 
@@ -976,7 +976,7 @@ static bool unit_dying(HzGame *g, HzUnit *u, int team)
         if (u->type == UNIT_REPAIR && repair_on(g)) {
             u->sprite_size &= 0x0FFF;   /* (session 72) the explosion in
                                            its own colours, not the
-                                           truck's (hz_vdp.h) */
+                                           truck's (video.h) */
         }
     }
     return true;

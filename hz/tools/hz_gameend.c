@@ -20,7 +20,7 @@
  * at frame FRAME (0-based) to VRAM_OUT. The win is saved where $HZ_SAVES
  * says (the check gives it a scratch folder). */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/front.h"
 
 #include <stdio.h>
@@ -38,41 +38,23 @@ typedef struct {
     const char *dump_path;
 } Run;
 
-static u32 crc32_buf(const u8 *p, size_t n)
-{
-    u32 c = 0xFFFFFFFFu;
-    for (size_t i = 0; i < n; i++) {
-        c ^= p[i];
-        for (int k = 0; k < 8; k++) {
-            c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
-        }
-    }
-    return ~c;
-}
+/* (Half B of docs/hackable.md's step 1) The cartridge's video memory as
+ * the check compares it: the draw layer's changes laid out by
+ * tools/video_vdp.c. */
+static VideoVdp g_cart;
 
 static void on_frame(HzGame *g, void *user)
 {
     Run *r = user;
-    const Vdp *v = g->vdp;
-    u8 vs[VDP_VSRAM_WORDS * 2];
-    for (int i = 0; i < VDP_VSRAM_WORDS; i++) {
-        vs[i * 2] = (u8)(v->vsram[i] >> 8);
-        vs[i * 2 + 1] = (u8)v->vsram[i];
-    }
-    fprintf(r->out, "F %d %08X ", r->done,
-            (unsigned)crc32_buf(v->vram, VDP_VRAM_SIZE));
-    for (int i = 0; i < VDP_CRAM_WORDS; i++) {
-        fprintf(r->out, "%03X", v->cram[i] & 0x0EEE);
-    }
-    fprintf(r->out, " %08X ", (unsigned)crc32_buf(vs, sizeof vs));
-    for (int i = 0; i < VDP_REG_COUNT; i++) {
-        fprintf(r->out, "%02X", v->reg[i]);
-    }
+    fprintf(r->out, "F %d ", r->done);
+    video_vdp_frame_line(&g_cart, g->video, r->out);
     fputc('\n', r->out);
     if (r->dump_path != NULL && r->done == r->dump_frame) {
         FILE *f = fopen(r->dump_path, "wb");
         if (f != NULL) {
-            fwrite(v->vram, 1, VDP_VRAM_SIZE, f);
+            static u8 vram[VDP_VRAM_SIZE];
+            video_vdp_vram(&g_cart, vram);
+            fwrite(vram, 1, VDP_VRAM_SIZE, f);
             fclose(f);
         }
     }
@@ -138,11 +120,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    static Video video;
     static Vdp vdp;
     static HzGame game;
     HzGame *g = &game;
+    video_init(&video);
     vdp_reset(&vdp);
-    game_init(g, &assets, &vdp);
+    video_vdp_watch(&g_cart, &video, &vdp);
+    game_init(g, &assets, &video);
     g->frame = on_frame;
     g->frame_user = r;
     g->snd_post = on_sound;

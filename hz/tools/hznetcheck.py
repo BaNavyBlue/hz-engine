@@ -3,7 +3,7 @@
 and two machines' (or two compilers') results compared.
 
     hznetcheck.py run HZ_NETCHECK ASSETS OUTDIR [--seeds 1-32]
-                      [--frames 200000] [--jobs N]
+                      [--frames 200000] [--jobs N] [--seen]
     hznetcheck.py compare REF OTHER...
 
 A network game would run the whole game on both machines and send only
@@ -41,13 +41,14 @@ def seed_list(text):
     return seeds
 
 
-def run_one(binary, assets, outdir, seed, frames):
+def run_one(binary, assets, outdir, seed, frames, seen=False):
     saves = os.path.join(outdir, 'saves', 's%d' % seed)
     shutil.rmtree(saves, ignore_errors=True)
     os.makedirs(saves)
     env = dict(os.environ, HZ_SAVES=saves)
     p = subprocess.run([binary, assets, str(seed), str(frames),
-                        os.path.join(outdir, 's%d.txt' % seed)],
+                        os.path.join(outdir, 's%d.txt' % seed)]
+                       + (['--seen'] if seen else []),
                        env=env, capture_output=True, text=True)
     return seed, p.returncode, p.stdout.strip(), p.stderr.strip()
 
@@ -98,7 +99,8 @@ def cmd_run(a):
     binary = os.path.abspath(a.binary)
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as pool:
-        jobs = [pool.submit(run_one, binary, a.assets, a.outdir, n, a.frames)
+        jobs = [pool.submit(run_one, binary, a.assets, a.outdir, n, a.frames,
+                            a.seen)
                 for n in seeds]
         with open(os.path.join(a.outdir, 'summary.txt'), 'w') as summary:
             for job in jobs:
@@ -161,6 +163,9 @@ def main():
     r.add_argument('--seeds', default='1-32')
     r.add_argument('--frames', type=int, default=200000)
     r.add_argument('--jobs', type=int, default=os.cpu_count())
+    r.add_argument('--seen', action='store_true',
+                   help='(session 79) hash the state, the screen and the '
+                   'sound only (hz_netcheck --seen)')
     c = sub.add_parser('compare')
     c.add_argument('ref')
     c.add_argument('other', nargs='+')

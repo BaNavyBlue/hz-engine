@@ -24,7 +24,7 @@
  * state in lower case, and after a V step "v crc" (CRC-32 of VRAM) and
  * "l" the layout words that differ from the map's (offset value pairs). */
 
-#include "../src/core/hz_vdp.h"
+#include "video_vdp.h"
 #include "../src/game/game.h"
 #include "../src/game/romcodes.h"
 #include "../src/game/tables.h"
@@ -397,12 +397,18 @@ static void make_case(HzGame *g, s16 cx, s16 cy)
     g->terrain_event3 = (u16)rng_below(0x10000);
 }
 
+/* (Half B of docs/hackable.md's step 1) The cartridge's VRAM, laid out
+ * from the draw layer's changes by tools/video_vdp.c. */
+static VideoVdp g_cart;
+static Video g_video;
+
 /* MapFx_Update with made-up views; VRAM filled first. */
 static void run_mapfx(FILE *f, HzGame *g, s16 cx, s16 cy)
 {
     u32 fill = (u32)rng_below(0x10000);
     for (u32 i = 0; i < VDP_VRAM_SIZE; i++) {
-        g->vdp->vram[i] = (u8)((i * 0x9E3779B1u + fill * 0x9E37u) >> 24);
+        g_cart.vdp->vram[i] = (u8)((i * 0x9E3779B1u + fill * 0x9E37u)
+                                   >> 24);
     }
     g->split_screen = (u16)rng_below(2);
     for (int p = 0; p < 2; p++) {
@@ -462,8 +468,10 @@ int main(int argc, char **argv)
     crc_init();
     static Vdp vdp;
     static HzGame game;
+    video_init(&g_video);
     vdp_reset(&vdp);
-    game_init(&game, &assets, &vdp);
+    video_vdp_watch(&g_cart, &g_video, &vdp);
+    game_init(&game, &assets, &g_video);
     game.options[0] = 0;
     game.options[3] = (u8)map;
     if (!game_new(&game)) {

@@ -4,11 +4,6 @@
 
 #include <string.h>
 
-/* Measured 8-bit DAC output levels for a VA4 in normal intensity, from the
- * PS2 port (palette.c). The ladder is non-linear; an even ramp shifts
- * every colour. */
-static const u8 DAC_LADDER[8] = { 0, 52, 87, 116, 144, 172, 206, 255 };
-
 void vdp_reset(Vdp *v)
 {
     VdpSprite *more = v->more;
@@ -203,26 +198,12 @@ bool vdp_raster_write(Vdp *v, int line, VdpTarget target, u16 addr,
 
 void vdp_cram_rgb(u16 cram, u8 rgb[3])
 {
-    rgb[0] = DAC_LADDER[(cram >> 1) & 7];
-    rgb[1] = DAC_LADDER[(cram >> 5) & 7];
-    rgb[2] = DAC_LADDER[(cram >> 9) & 7];
+    cram_rgb(cram, rgb);
 }
 
 u16 vdp_rgb_cram(const u8 rgb[3])
 {
-    static const int SHIFT[3] = { 1, 5, 9 };            /* R, G, B */
-    u16 word = 0;
-    for (int c = 0; c < 3; c++) {
-        int best = 0;
-        for (int level = 1; level < 8; level++) {
-            int d = abs(rgb[c] - DAC_LADDER[level]);
-            if (d < abs(rgb[c] - DAC_LADDER[best])) {
-                best = level;
-            }
-        }
-        word = (u16)(word | (best << SHIFT[c]));
-    }
-    return word;
+    return cram_from_rgb(rgb);
 }
 
 /* -- rendering ------------------------------------------------------- */

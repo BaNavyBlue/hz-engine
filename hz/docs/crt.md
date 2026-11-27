@@ -12,7 +12,7 @@ here unchanged. What differs:
 * **Names.** `HZ_DISPLAY`, `HZ_GPU`, `HZ_GPU_DEBUG`, `HZ_HDR_SWAPCHAIN` for
   PS2's `PS2_*`. `src/core/cram.c` gives the CRT code PS2's CRAM helpers
   (`cram_r`, `cram_make`, `cram_to_rgb8`, `cram_from_rgb8`) on
-  `hz_vdp.c`'s ladder, which is PS2's.
+  the DAC ladder PS2 measured (`cram_rgb`).
 * **The frames checked.** PS2 crops its route probe's PNGs (the title's
   logo, Rudo's HP box). HZ has no route probe: `make crt_check` first
   writes two frames of the headless game, indexed (`HZ_OUT_INDEXED=1`),

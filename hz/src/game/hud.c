@@ -18,8 +18,6 @@
                                    the value; + 1-3 quarters of it */
 #define GAUGE_FULL   0xA5B4     /* four quarters of the value */
 
-#define WINDOW_PLANE 0xF000     /* the HUD strip's plane: 64 cells a row */
-
 /* The bars' sizes: a bar's maximum in quarters, and its cells. HP shows
  * HP / 8 and the HQ its HP / 32, ammo ammo / 4 and fuel fuel / 64. With
  * KIDOU's maxima (HP 256, ammo 96, fuel 1556) and HQs starting at 1024,
@@ -33,21 +31,16 @@
  * HP and fuel on row 2; P1's from columns 2 and 12, P2's from 22 and 32. */
 typedef struct {
     u8 col, row;
-} Cell;
+} BarCell;
 
 typedef struct {
-    Cell hp, hq, ammo, fuel;
+    BarCell hp, hq, ammo, fuel;
 } BarCells;
 
 static const BarCells BAR_CELLS[2] = {
     { .hp = { 2, 2 }, .hq = { 2, 1 }, .ammo = { 12, 1 }, .fuel = { 12, 2 } },
     { .hp = { 22, 2 }, .hq = { 22, 1 }, .ammo = { 32, 1 }, .fuel = { 32, 2 } }
 };
-
-static u16 window_cell(Cell at)
-{
-    return (u16)(WINDOW_PLANE + at.row * 0x80 + at.col * 2);
-}
 
 /* A bar's value against what it last showed: true, and the shown byte
  * updated, when they differ. QUIRK: they are compared as bytes, so a
@@ -73,13 +66,13 @@ void hud_update_gauges(HzGame *g)
         u16 hp = (m->flags & MECH_DESTROYED) ? 0 : (u16)(m->hp >> 3);
         if (bar_changed(&m->hp_shown, hp)) {
             hud_queue_bar(g, hp, BIG_BAR_QUARTERS, BIG_BAR_CELLS,
-                          window_cell(at->hp));
+                          LAYER_W, at->hp.col, at->hp.row);
         }
 
         u16 hq = (u16)(post_hq_hp(&g->posts[HZ_POST_HQ + p]) >> 5);
         if (bar_changed(&m->hq_hp_shown, hq)) {
             hud_queue_bar(g, hq, BIG_BAR_QUARTERS, BIG_BAR_CELLS,
-                          window_cell(at->hq));
+                          LAYER_W, at->hq.col, at->hq.row);
             if (p == 1) {
                 /* QUIRK: P2's HQ bar is queued with bra.w HUD_QueueBar,
                  * not bsr.w, so its rts ends HUD_UpdateGauges: P2's ammo
@@ -91,13 +84,13 @@ void hud_update_gauges(HzGame *g)
         u16 ammo = (u16)(m->ammo >> 2);
         if (bar_changed(&m->ammo_shown, ammo)) {
             hud_queue_bar(g, ammo, SMALL_BAR_QUARTERS, SMALL_BAR_CELLS,
-                          window_cell(at->ammo));
+                          LAYER_W, at->ammo.col, at->ammo.row);
         }
 
         u16 fuel = (u16)(m->fuel >> 6);
         if (bar_changed(&m->fuel_shown, fuel)) {
             hud_queue_bar(g, fuel, SMALL_BAR_QUARTERS, SMALL_BAR_CELLS,
-                          window_cell(at->fuel));
+                          LAYER_W, at->fuel.col, at->fuel.row);
         }
     }
 }
@@ -138,11 +131,12 @@ static HzGaugeBar *free_bar(HzGame *g)
 }
 
 /* HUD_QueueBar ($8684): a bar of `cells` cells (at most 16) showing
- * `value` of `max` quarters (the value capped at the maximum), from VRAM
- * `addr`. QUIRK: with the queue full the bar is dropped, though the
- * caller has already set its shown value, so it waits for the next
- * change. */
-void hud_queue_bar(HzGame *g, u16 value, u16 max, int cells, u16 addr)
+ * `value` of `max` quarters (the value capped at the maximum), from cell
+ * (col, row) of the layer. QUIRK: with the queue full the bar is dropped,
+ * though the caller has already set its shown value, so it waits for the
+ * next change. */
+void hud_queue_bar(HzGame *g, u16 value, u16 max, int cells, LayerId layer,
+                   int col, int row)
 {
     if (value > max) {
         value = max;
@@ -152,16 +146,19 @@ void hud_queue_bar(HzGame *g, u16 value, u16 max, int cells, u16 addr)
         return;
     }
     bar->last = (u16)(cells - 1);
-    bar->addr = addr;
+    bar->layer = (u8)layer;
+    bar->col = (u8)(col & (PLANE_COLS - 1));
+    bar->row = (u8)(row & (PLANE_ROWS - 1));
     for (int k = 0; k < cells && k < HZ_GAUGE_CELLS; k++) {
         bar->cells[k] = cell_tile(quarters_in_cell(value, k),
                                   quarters_in_cell(max, k));
     }
 }
 
-/* HUD_FlushBars ($8736): every queued bar to VRAM, and its entry freed.
- * (The 68k leaves the VDP's auto-increment at 2 here: whatever sets it to
- * $80 puts 2 back.) */
+/* HUD_FlushBars ($8736): every queued bar onto its layer, and its entry
+ * freed. The cells run along the row and on into the next (the 68k
+ * writes them one after another in VRAM), the last row wrapping round to
+ * the first. */
 void hud_flush_bars(HzGame *g)
 {
     for (int i = 0; i < HZ_GAUGE_BARS; i++) {
@@ -171,9 +168,11 @@ void hud_flush_bars(HzGame *g)
         }
         int cells = bar->last + 1;
         bar->last = 0;
-        vdp_set_write(g->vdp, VDP_VRAM, bar->addr);
-        for (int k = 0; k < cells && k < HZ_GAUGE_CELLS; k++) {
-            vdp_write16(g->vdp, bar->cells[k]);
+        int at = bar->row * PLANE_COLS + bar->col;
+        for (int k = 0; k < cells && k < HZ_GAUGE_CELLS; k++, at++) {
+            at &= PLANE_COLS * PLANE_ROWS - 1;
+            video_set_word(g->video, (LayerId)bar->layer, at % PLANE_COLS,
+                           at / PLANE_COLS, bar->cells[k]);
         }
     }
 }

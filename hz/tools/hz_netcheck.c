@@ -19,7 +19,8 @@
  *
  * Each frame folds into a running 64-bit hash (FNV-1a): the state as
  * hz_demo's images lay it out (its globals, mechs, units, posts and shots),
- * v_grid, the VDP's VRAM, CRAM, VSRAM and registers, the frame vdp_render
+ * v_grid, what the draw layer holds (src/core/video.h: its tiles and
+ * cells, colours, scroll and layout, sprites), the frame video_compose
  * draws, and the sound commands posted. OUT (text):
  *   S second hash where     every 60 frames (where: title, load, game,
  *                           over), the hash so far
@@ -28,11 +29,16 @@
  *   E frames hash games demos     at the end
  * Two builds agree when their OUTs are the same. --verbose FROM TO also
  * writes each frame's own hashes in FROM..TO (V frame globals mechs units
- * posts shots grid vram cram vsram regs screen sound), to find the field
- * where two builds part. Summary on stdout. Set HZ_SAVES to an empty
+ * posts shots grid tiles colours scroll sprites screen sound; up to
+ * session 79 the VDP's vram cram vsram regs in their places), to find the
+ * field where two builds part. --seen (session 79) folds only the state,
+ * the screen and the sound, not how the screen is held: two builds that
+ * draw the same frames another way compare. --frame N FILE (session 80)
+ * writes frame N as drawn: its 320 x 224 colour indices, then the 64
+ * colours (big-endian words). Summary on stdout. Set HZ_SAVES to an empty
  * folder: a won game is saved there and CONT reads it back. */
 
-#include "../src/core/hz_vdp.h"
+#include "../src/core/video.h"
 #include "../src/game/game.h"
 #include "../src/game/statehash.h"
 
@@ -141,6 +147,9 @@ typedef struct {
     Player   player[2];
     u64      choices;       /* the run's other picks */
     int      verbose_from, verbose_to;
+    int      frame_at;      /* --frame N FILE: frame N's picture */
+    const char *frame_path;
+    bool     seen;          /* --seen: what is seen and heard only */
     int      frames_in[WHERE_COUNT];
     int      games, demos, overs;
 } Run;
@@ -164,14 +173,35 @@ static void on_frame(HzGame *g, void *user)
     if (g->quit) {
         return;
     }
-    Vdp *v = g->vdp;
-    vdp_render(v, g_screen);        /* applies HBlank's write, as shown */
+    video_compose(g->video, g_screen);
 
     u64 part[STATE_HASH_PARTS + 2];
     state_hash_parts(g, part);
     part[10] = fnv(FNV_BASIS, g_screen, sizeof g_screen);
     part[11] = r->sound;
-    r->hash = state_hash_fold(r->hash, part, 12);
+    if (r->seen) {
+        /* (Session 79) The game, the screen and the sound, not how the
+         * screen is held: so a build that draws another way (the VDP
+         * model then, the draw layer now: docs/hackable.md) compares. */
+        u64 seen[8];
+        memcpy(seen, part, 6 * sizeof seen[0]);
+        seen[6] = part[10];
+        seen[7] = part[11];
+        r->hash = state_hash_fold(r->hash, seen, 8);
+    } else {
+        r->hash = state_hash_fold(r->hash, part, 12);
+    }
+    if (r->done == r->frame_at) {
+        FILE *pf = fopen(r->frame_path, "wb");
+        if (pf != NULL) {
+            fwrite(g_screen, 1, sizeof g_screen, pf);
+            for (int i = 0; i < 64; i++) {
+                fputc(g->video->colours[i] >> 8, pf);
+                fputc(g->video->colours[i] & 0xFF, pf);
+            }
+            fclose(pf);
+        }
+    }
     if (r->done >= r->verbose_from && r->done <= r->verbose_to) {
         fprintf(r->out, "V %d", r->done);
         for (int i = 0; i < 12; i++) {
@@ -218,7 +248,7 @@ int main(int argc, char **argv)
 {
     if (argc < 5) {
         fprintf(stderr, "usage: hz_netcheck ASSETS SEED FRAMES OUT "
-                        "[--verbose FROM TO]\n");
+                        "[--verbose FROM TO] [--seen] [--frame N FILE]\n");
         return 2;
     }
     static HzAssets assets;
@@ -230,10 +260,18 @@ int main(int argc, char **argv)
     r->limit = atoi(argv[3]);
     r->verbose_from = -1;
     r->verbose_to = -2;
+    r->frame_at = -1;
     for (int i = 5; i < argc; i++) {
+        if (strcmp(argv[i], "--frame") == 0 && i + 2 < argc) {
+            r->frame_at = atoi(argv[++i]);
+            r->frame_path = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--verbose") == 0 && i + 2 < argc) {
             r->verbose_from = atoi(argv[++i]);
             r->verbose_to = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--seen") == 0) {
+            r->seen = true;
         } else {
             fprintf(stderr, "hz_netcheck: what is %s?\n", argv[i]);
             return 2;
@@ -252,11 +290,11 @@ int main(int argc, char **argv)
         r->player[p].random = seed * 3 + (u64)p + 1;
     }
 
-    static Vdp vdp;
+    static Video video;
     static HzGame game;
     HzGame *g = &game;
-    vdp_reset(&vdp);
-    game_init(g, &assets, &vdp);
+    video_init(&video);
+    game_init(g, &assets, &video);
     g->frame = on_frame;
     g->frame_user = r;
     g->snd_music_on = music_on;

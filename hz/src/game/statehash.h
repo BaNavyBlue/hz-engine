@@ -8,9 +8,11 @@
  *
  * The state as hz_demo's images lay it out (its globals with v_options
  * and v_winner, the mechs, units, posts and shots, big-endian as the 68k
- * keeps them), v_grid, and the VDP's VRAM, CRAM, VSRAM and registers --
- * each part a 64-bit FNV-1a. What the screen shows and the sound commands
- * follow from these; hz_netcheck adds them as parts of its own. */
+ * keeps them), v_grid, and (half B of docs/hackable.md's step 1) what the
+ * draw layer holds: its tiles and cells, its colours, its scroll and
+ * layout, its sprites -- each part a 64-bit FNV-1a. What the screen shows
+ * and the sound commands follow from these; hz_netcheck adds them as
+ * parts of its own. */
 
 #include "game.h"
 
@@ -23,9 +25,10 @@
 
 u64 state_fnv(u64 h, const void *data, size_t n);
 
-/* Each part's hash: globals, mechs, units, posts, shots, grid, VRAM,
- * CRAM, VSRAM, registers. (Session 59) In an own-view game
- * (HzGame.own_view) the display is left out, as state_hash_game does. */
+/* Each part's hash: globals, mechs, units, posts, shots, grid, the
+ * layer's tiles and cells, colours, scroll and layout, sprites. (Session
+ * 59) In an own-view game (HzGame.own_view) the display is left out, as
+ * state_hash_game does. */
 void state_hash_parts(const HzGame *g, u64 part[STATE_HASH_PARTS]);
 
 /* The parts folded into one, as hz_netcheck folds its: each part's eight
