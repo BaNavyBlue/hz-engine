@@ -1102,14 +1102,19 @@ HOME_TOUR := $(HOME_LOOP) : $(HOME_LOOP)
 # Each map in modes 0, 5 and 6 twice: P2 chasing P1 with the alerts on
 # (jets, each in the other's view), and P2 mirroring P1 while both land
 # and take off; then each map once (the mode by map) with P2 chasing and
-# both landing, and with both destroyed (debris; the VDP's per-line
-# limits); then in split screen with a CPU player and its start units:
-# P2 CPU chasing, P1 CPU landing, and each with the CPU's view circling
-# its base (HOME_TOUR; P2 CPU with the alerts, P1 CPU landing). The
-# difficulty (so the start units'
+# both landing, and with both destroyed (debris; past the VDP's per-line
+# limits, which the port has not: every sprite is drawn, session 81);
+# then in split screen with a CPU player and its start units: P2 CPU
+# chasing, P1 CPU landing, and each with the CPU's view circling its base
+# (HOME_TOUR; P2 CPU with the alerts, P1 CPU landing); and (session 81)
+# the crowd: P1 into P2 CPU's base, P2 chasing, both destroyed, the
+# alerts on (CROWD_TOUR), so the list runs past the 70 entries the
+# cartridge's multiplexer sent a frame (71-73 on maps 0-2) and every one
+# must be drawn. The difficulty (so the start units'
 # type) is (map + mode) mod 4. Each run's raw frames (about 110 MB) are
 # checked, then removed; the last frame stays as
 # pans/map<N>_mode<M>_<run>.png.
+CROWD_TOUR := -8,-8,300 : 0,0,300
 PAN_RUN = d=pans/map$(1)_mode$(2)_$(3); rm -rf $$d; mkdir -p $$d; \
 	./hz_shot "$(ASSETS)" $$d.png --map $(1) --mode $(2) --pan "$(PAN_TOUR)" \
 	    --difficulty $$(( ($(1) + $(2)) % 4 )) $(4) --raw-frames $$d \
@@ -1133,6 +1138,8 @@ pans: hz_shot $(ROM)
 	    $(call PAN_RUN,$${m},1,home,--alerts --pan2 "$(HOME_TOUR)"); \
 	    $(call PAN_RUN,$${m},2,home,--land --pan "$(HOME_TOUR)" \
 	        --pan2 "$(PAN_TOUR)"); \
+	    $(call PAN_RUN,$${m},1,crowd,--chase --debris --alerts \
+	        --pan "$(CROWD_TOUR)"); \
 	done
 
 check-shots: shots $(ROM)

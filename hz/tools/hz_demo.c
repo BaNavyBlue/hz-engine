@@ -28,6 +28,7 @@
 
 #include "video_vdp.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 
 #include <stdio.h>
@@ -417,22 +418,20 @@ int main(int argc, char **argv)
     g->options[0] = 5;
     g->options[2] = 0xFF;
     game_title_prepare(g);
-    g->frame = on_frame;
-    g->frame_user = r;
     g->snd_post = on_sound;
     g->snd_user = r;
     g->game_type = -1;              /* MenuModule_Title's d0: the demo */
     g->demo_index = (u16)index;
 
     const char *how = "frames";
-    HzSetup setup = game_setup_after_title(g);
+    HzSetup setup = tick_setup(g, on_frame, r);
     if (setup == HZ_SETUP_ABORTED) {
         how = "aborted";
     } else if (setup == HZ_SETUP_GAME && !g->quit) {
-        game_start(g);
-        HzLoopExit exit = game_frame(g, false);
+        tick_start(g, on_frame, r);
+        HzLoopExit exit = tick_pass(g, false, on_frame, r);
         while (exit == HZ_LOOP_ON) {
-            exit = game_frame(g, true);
+            exit = tick_pass(g, true, on_frame, r);
         }
         if (exit == HZ_LOOP_TITLE) {
             how = "title";

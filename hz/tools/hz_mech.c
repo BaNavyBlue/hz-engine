@@ -53,6 +53,7 @@
 
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 
 #include <stdio.h>
@@ -679,15 +680,14 @@ int main(int argc, char **argv)
     static HzGame game;
     video_init(&video);
     game_init(&game, &assets, &video);
-    game.frame = on_frame;
     game.options[0] = (u8)mode;
     game.options[1] = (u8)difficulty;
     game.options[3] = (u8)map;
-    if (!game_new(&game)) {
+    if (!tick_new(&game, on_frame, NULL)) {
         fclose(log.f);
         return 1;
     }
-    game_start(&game);
+    tick_start(&game, on_frame, NULL);
     game.mech_probe = probe;
     game.mech_probe_user = &log;
     find_event_cells(&game);
@@ -699,13 +699,13 @@ int main(int argc, char **argv)
     game.menus_frozen = true;       /* nor the order menu (make ordermenu) */
     game.cpus_frozen = true;        /* nor the CPU's AI (make mechai) */
     game.combat_probe_user = &log;
-    HzLoopExit exit = game_frame(&game, false);
+    HzLoopExit exit = tick_pass(&game, false, on_frame, NULL);
     for (log.pass = 1; log.pass < passes && exit == HZ_LOOP_ON; log.pass++) {
         fprintf(log.f, "P %X %X %X %X\n", (unsigned)(u16)game.mech[0].x,
                 (unsigned)(u16)game.mech[0].y, (unsigned)(u16)game.mech[1].x,
                 (unsigned)(u16)game.mech[1].y);
         poke(&game, log.f);
-        exit = game_frame(&game, true);
+        exit = tick_pass(&game, true, on_frame, NULL);
     }
     fclose(log.f);
     printf("map %d mode %d: %d passes\n", map, mode, log.pass);

@@ -26,6 +26,7 @@
 
 #include "video_vdp.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 
 #include <stdio.h>
@@ -411,20 +412,19 @@ static bool make_case(HzGame *g, const HzAssets *assets, Vdp *vdp)
     vdp_reset(vdp);
     video_vdp_watch(&g_cart, &g_video, vdp);
     game_init(g, assets, &g_video);
-    g->frame = frame_hook;
     g->options[0] = MODES[rnd(5)];
     g->options[1] = (u8)rnd(4);
     g->options[3] = (u8)rnd(8);
-    if (!game_new(g)) {
+    if (!tick_new(g, frame_hook, NULL)) {
         return false;
     }
-    game_start(g);
+    tick_start(g, frame_hook, NULL);
     int frames = rnd(240);
     for (int f = 0; f < frames; f++) {
         for (int p = 0; p < 2; p++) {
             random_pad(&g->pad_in[p], 25);
         }
-        if (game_frame(g, true) != HZ_LOOP_ON) {
+        if (tick_pass(g, true, frame_hook, NULL) != HZ_LOOP_ON) {
             return false;
         }
     }

@@ -16,6 +16,7 @@
 
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 
 #include <stdio.h>
@@ -329,7 +330,7 @@ int main(int argc, char **argv)
     game_init(&game, &assets, &video);
     game.options[0] = 0;
     game.options[3] = (u8)map;
-    if (!game_new(&game)) {
+    if (!tick_new(&game, NULL, NULL)) {
         fclose(f);
         return 1;
     }

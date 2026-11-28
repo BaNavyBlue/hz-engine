@@ -1,6 +1,6 @@
 /* Game_Over ($9094) and its finale: when an HQ falls, the screen settles on
  * it, it blows up with the view shaking and the map fading to black, and
- * the game's end follows (menu_game_end, game_end.c: WINNER and the
+ * the game's end follows (MenuModule_GameEnd, game_end.c: WINNER and the
  * results). Then MainLoop_Title: the title again. */
 
 #include <string.h>
@@ -10,10 +10,10 @@
 
 /* VDP_BeginUpload ($959C): a frame, then HBlank's relink blocked and the
  * display off for the uploads. VDP_EndUpload ($95A6): the display on and
- * the relink allowed again (its wait for VBlank's end takes no frame). */
+ * the relink allowed again (its wait for VBlank's end takes no frame).
+ * (Session 80) Here from after the frame: game_over_step's. */
 static void begin_upload(HzGame *g)
 {
-    game_wait_vblank(g);
     g->split_done = 2;
     video_display(g->video, false);
 }
@@ -97,7 +97,8 @@ static void reset_views(HzGame *g)
 }
 
 /* GameOver_ClearUnits ($9252): every unit record cleared (the shots are
- * left); v_map_palette reloaded; the sprites rebuilt and uploaded.
+ * left); v_map_palette reloaded; the sprites rebuilt and uploaded (after
+ * a frame: the upload, clear_units_upload, is the next step's).
  * QUIRK: the palette is MapPalettes' first, map 0's (ABGRUND's) whatever
  * the map, so on any other map the colours change to ABGRUND's at the
  * fade's first step (nothing uploads it before). Kept. */
@@ -107,7 +108,10 @@ static void clear_units(HzGame *g)
     memcpy(g->map_palette, g->assets->map[0].palette,
            sizeof g->map_palette);
     sprites_build(g);
-    sprites_multiplex(g);
+}
+
+static void clear_units_upload(HzGame *g)
+{
     begin_upload(g);
     sprites_upload(g);
     end_upload(g);
@@ -188,14 +192,6 @@ static void palette_fade_out_step(HzGame *g)
     video_set_colours(g->video, 0, g->map_palette, 16);
 }
 
-/* The shake's state: the scroll shaken (0 plane A, 1 plane B, (session
- * 66) 2 both), frames so far, the offset of the pair. */
-typedef struct {
-    int plane;
-    u16 frames;
-    s16 dx, dy;
-} Shake;
-
 /* -3..3 (the 68k's -3..4, a 4 made 0). */
 static s16 shake_offset(HzGame *g)
 {
@@ -206,9 +202,11 @@ static s16 shake_offset(HzGame *g)
 /* GameOver_ShakeFrame ($930E): the scroll knocked by a new random offset
  * on odd frames and back by it on even ones; the map's edges, the shots
  * and units (the explosions play out) and the sprites, uploaded over two
- * frames; a fade step every 8th. */
-static void shake_frame(HzGame *g, Shake *s)
+ * frames; a fade step every 8th. (Session 80) Up to the first frame;
+ * shake_after_first and shake_after_second after each. */
+static void shake_frame(HzGame *g)
 {
+    HzOverRun *s = &g->over;
     s->frames++;
     if (s->frames & 1) {
         s->dx = shake_offset(g);
@@ -224,13 +222,20 @@ static void shake_frame(HzGame *g, Shake *s)
     map_scroll_update(g);
     combat_update(g);
     sprites_build(g);
-    sprites_multiplex(g);
+}
+
+static void shake_after_first(HzGame *g)
+{
     begin_upload(g);
     map_flush_scroll(g);
     end_upload(g);
+}
+
+static void shake_after_second(HzGame *g)
+{
     begin_upload(g);
     sprites_upload(g);
-    if ((s->frames & 7) == 0) {
+    if ((g->over.frames & 7) == 0) {
         palette_fade_out_step(g);
     }
     end_upload(g);
@@ -243,51 +248,100 @@ static void shake_frame(HzGame *g, Shake *s)
  * shake alone. The scroll shaken is plane A's, or plane B's in a split
  * screen when P2 lost (P2's view). (Session 66) A draw: the explosions by
  * turns round both HQs (P1's first), and in a split screen both views
- * shaken. */
-static void destroy_hq(HzGame *g)
+ * shaken. (Session 80) From after the sfx's frame: the shake set up. */
+static void destroy_hq_shake(HzGame *g)
 {
-    snd_fade_music(g, 0);
-    game_wait_vblank(g);
-    snd_queue_sfx(g, SFX_HQ_DESTROYED);
-    game_wait_vblank(g);
-    snd_flush_sfx(g);
-
+    HzOverRun *s = &g->over;
     bool draw = g->winner == HZ_DRAW;
     int lost = (g->winner != 0) ? 0 : 1;
-    Shake s = { (lost == 1 && g->split_screen) ? 1 : 0, 0, 0, 0 };
+    s->plane = (lost == 1 && g->split_screen) ? 1 : 0;
     if (draw && g->split_screen) {
-        s.plane = 2;
+        s->plane = 2;
     }
-    s16 x[2], y[2];
+    s->frames = 0;
+    s->dx = 0;
+    s->dy = 0;
     for (int p = 0; p < 2; p++) {
         const HzPost *hq = &g->posts[HZ_POST_HQ + (draw ? p : lost)];
-        x[p] = (s16)(hq->x - 0x0C);
-        y[p] = (s16)(hq->y - 0x0C);
+        s->x[p] = (s16)(hq->x - 0x0C);
+        s->y[p] = (s16)(hq->y - 0x0C);
     }
-
     g->fade_steps = 0;
-    for (int i = 0; i < 100 && !g->quit; i++) {
-        random_explosion(g, x[i & 1], y[i & 1]);
-        shake_frame(g, &s);
-    }
-    g->fade_steps = 0x10;
-    for (int i = 0; i < 64 && !g->quit; i++) {
-        random_explosion(g, x[i & 1], y[i & 1]);
-        shake_frame(g, &s);
-    }
-    for (int i = 0; i < 32 && !g->quit; i++) {
-        shake_frame(g, &s);
-    }
+    s->loop = 0;
+    s->i = 0;
 }
 
+/* The shake's loops: 100 frames, the fade set going, 64, then 32 without
+ * the explosions; each loop ends early on quit. The next frame's start
+ * (true), or false when they are done. */
+static bool shake_next(HzGame *g)
+{
+    static const u16 FRAMES[3] = { 100, 64, 32 };
+    HzOverRun *s = &g->over;
+    while (s->loop < 3 && (s->i >= FRAMES[s->loop] || g->quit)) {
+        s->loop++;
+        s->i = 0;
+        if (s->loop == 1) {
+            g->fade_steps = 0x10;
+        }
+    }
+    if (s->loop == 3) {
+        return false;
+    }
+    if (s->loop < 2) {
+        random_explosion(g, s->x[s->i & 1], s->y[s->i & 1]);
+    }
+    shake_frame(g);
+    s->half = 0;
+    return true;
+}
+
+/* Game_Over's finale's phases (game_over_step), each from a frame on:
+ * the bars' upload; the units' upload; the blast's sfx; the shake set up;
+ * the shake; the last frame. */
+enum {
+    OVER_BARS,
+    OVER_UNITS,
+    OVER_BLAST,
+    OVER_BLAST_OUT,
+    OVER_SHAKE,
+    OVER_END
+};
+
 /* Game_Over ($9094), from Game_SecondTick when an HQ is at 0 HP (v_winner
- * set, interrupts masked): HBlank's relink blocked, v_game_over $FFFF (no
+ * set, the frame work held): HBlank's relink blocked, v_game_over $FFFF (no
  * more alerts drawn), the outpost counts kept for the results, the HUD's
  * bars brought up to date; in a wide game the mechs placed round the lost
  * HQ; the views reset to the jets; the units cleared; the HQ destroyed;
  * the effects stopped; the game's end; display off. MainLoop_Title
- * follows (the caller's loop). */
-void game_over(HzGame *g)
+ * follows (the caller's loop). (Session 80) Up to the game's end a frame
+ * at a time: game_over_begin, game_over_step. */
+/* Game_Over to the title as one sequence: the finale (the game's frames),
+ * then MenuModule_GameEnd (the menus': g->tick_menus says which is
+ * running), then the display off. */
+HzRun game_over_run_step(HzGame *g)
+{
+    if (!g->tick_menus) {
+        if (game_over_step(g) == HZ_RUN_FRAME) {
+            return HZ_RUN_FRAME;
+        }
+        menu_game_end_begin(g);
+        g->tick_menus = true;
+    }
+    if (menu_game_end_step(g) == HZ_RUN_FRAME) {
+        return HZ_RUN_FRAME;
+    }
+    game_display_off(g);
+    return HZ_RUN_DONE;
+}
+
+void game_begin_over(HzGame *g)
+{
+    game_over_begin(g);
+    game_run_begin(g, game_over_run_step, false);
+}
+
+void game_over_begin(HzGame *g)
 {
     g->split_done = 1;
     g->hud_sprite_cut = 0;      /* move.w #$100,v_split_done */
@@ -295,17 +349,62 @@ void game_over(HzGame *g)
     g->game_over = (u16)(g->game_over - 1);
     memcpy(g->results_bases, g->outpost_count, sizeof g->results_bases);
     hud_update_gauges(g);
-    begin_upload(g);
-    hud_flush_bars(g);
-    end_upload(g);
-    if (!g->split_screen) {
-        place_mechs(g);
+    g->over.phase = OVER_BARS;
+}
+
+HzRun game_over_step(HzGame *g)
+{
+    HzOverRun *s = &g->over;
+    switch (s->phase) {
+        case OVER_BARS: {
+            s->phase = OVER_UNITS;
+            return HZ_RUN_FRAME;                /* begin_upload's frame */
+        }
+        case OVER_UNITS: {
+            begin_upload(g);
+            hud_flush_bars(g);
+            end_upload(g);
+            if (!g->split_screen) {
+                place_mechs(g);
+            }
+            reset_views(g);
+            clear_units(g);
+            s->phase = OVER_BLAST;
+            return HZ_RUN_FRAME;
+        }
+        case OVER_BLAST: {
+            clear_units_upload(g);
+            snd_fade_music(g, 0);               /* GameOver_DestroyHQ */
+            s->phase = OVER_BLAST_OUT;
+            return HZ_RUN_FRAME;
+        }
+        case OVER_BLAST_OUT: {
+            snd_queue_sfx(g, SFX_HQ_DESTROYED);
+            s->phase = OVER_SHAKE;
+            s->half = 2;                        /* the shake not begun */
+            return HZ_RUN_FRAME;
+        }
+        case OVER_SHAKE: {
+            if (s->half == 2) {
+                snd_flush_sfx(g);
+                destroy_hq_shake(g);
+            } else if (s->half == 0) {
+                shake_after_first(g);
+                s->half = 1;
+                return HZ_RUN_FRAME;
+            } else {
+                shake_after_second(g);
+                s->i++;
+            }
+            if (shake_next(g)) {
+                return HZ_RUN_FRAME;
+            }
+            s->phase = OVER_END;
+            return HZ_RUN_FRAME;                /* Game_Over's own */
+        }
+        default: {                              /* OVER_END */
+            snd_stop_sfx(g);
+            return HZ_RUN_DONE;
+        }
     }
-    reset_views(g);
-    clear_units(g);
-    destroy_hq(g);
-    game_wait_vblank(g);
-    snd_stop_sfx(g);
-    menu_game_end(g);
-    game_display_off(g);
 }

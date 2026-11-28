@@ -76,7 +76,7 @@ typedef struct {
 u8   replay_pad_byte(const HzPad *p);
 void replay_pad_set(HzPad *p, u8 b);
 
-/* Just before game_start: the start from the game, the frames emptied. */
+/* Just before Game_Start: the start from the game, the frames emptied. */
 void replay_begin(HzReplay *r, const HzGame *g, u64 game_id, int code,
                   const char *kind, int side, const char *rival);
 
@@ -105,8 +105,8 @@ void replay_free(HzReplay *r);
 void replay_file_name(const HzReplay *r, char *out, size_t len);
 
 /* Playing it: after game_init, the hooks and Snd_Init as at a cold boot,
- * the start as recorded (game_title_prepare, v_game_type 0 and
- * game_setup_after_title follow, then game_start). */
+ * the start as recorded (game_title_prepare, v_game_type 0 and the game
+ * set up after the title follow, then Game_Start). */
 void replay_apply_start(HzGame *g, const HzReplay *r);
 
 /* At hand-over `frame` of the replay: the PATCHES changed there, if any,

@@ -28,8 +28,8 @@
  * B high, A or W high, sprites high.
  *
  * The screen of a split game: the HUD strip (the top 32 lines), view A on
- * the left (144 pixels), the divider (32 pixels: six sprites, in front of
- * both views' edges) and view B on the right (144). */
+ * the left (144 pixels), the divider (32 pixels, in front of both views'
+ * edges and every sprite: video_divider) and view B on the right (144). */
 
 #define SCREEN_W    320
 #define SCREEN_H    224
@@ -44,13 +44,17 @@
 #define VIDEO_HUD_LINES   32    /* the HUD strip: the window's top 4 rows */
 #define VIDEO_SPLIT_COLS  18    /* split: the window from column 18 (x 144) */
 
-/* The frame's sprites (the cartridge's 80), and the cartridge's own limits
- * on them, kept as the game's rule (docs/hackable.md, open question 2):
- * 20 sprites on a line and 320 of their pixels, the first in the list
- * first; past either, a line draws no more. */
-#define VIDEO_SPRITES      80
-#define VIDEO_LINE_SPRITES 20
-#define VIDEO_LINE_DOTS    320
+/* (Session 81) The frame's sprites: as many as the game pushes, each drawn
+ * on every line it covers. The cartridge's limits are gone (80 a frame,
+ * 20 and 320 of their pixels a line, a sprite at x -128 ending its line):
+ * The owner, "We can do away with stock flicker behavior we're not
+ * making an emulator" (docs/hackable.md, open question 2). */
+
+/* The divider of a split game: x 144, 32 pixels wide, from line 32 down,
+ * a 32 x 32 picture (4 x 4 tiles from its cell's tile, down each column
+ * first, as a sprite's) one under another. */
+#define VIDEO_DIVIDER_X     144
+#define VIDEO_DIVIDER_TILES 4
 
 typedef enum {
     LAYER_B = 0,
@@ -134,12 +138,14 @@ struct Video {
     Cram colours[VIDEO_COLOURS];
 
     /* The frame's sprites, the first on top. The screen's come first (the
-     * divider; the loading screen's walk), then from `game_at` on the
-     * game's, which the HUD strip can hold back: `held`, not drawn from
-     * the top of the frame; `back_at`, drawn again from that line of the
-     * next frame composed (and every line after it). */
-    Sprite sprite[VIDEO_SPRITES];
+     * loading screen's walk), then from `game_at` on the game's, which the
+     * HUD strip can hold back: `held`, not drawn from the top of the
+     * frame; `back_at`, drawn again from that line of the next frame
+     * composed (and every line after it). Heap memory, grown as pushed and
+     * kept by video_init (as `behind`). */
+    Sprite *sprite;
     int    sprite_count;
+    int    sprite_cap;
     int    game_at;
     bool   held;
     int    back_at;                         /* -1: none */
@@ -157,6 +163,11 @@ struct Video {
     u8   sprite_colours[16][16];
     u16  sprite_colours_on;
 
+    /* (Session 81) The split game's divider (video_divider): its cell (the
+     * first tile, its palette line), while `divider` is set. */
+    bool divider;
+    Cell divider_cell;
+
     const VideoWatch *watch;
 };
 
@@ -167,8 +178,8 @@ struct Video {
 Cell cell_from_word(u16 w);
 u16  cell_word(Cell c);
 
-/* Everything clear, the game's split layout, the screen off; the sprites
- * behind (heap memory) kept. */
+/* Everything clear, the game's split layout, the screen off; the sprites'
+ * heap memory kept. */
 void video_init(Video *v);
 
 /* (For the checks) The watcher told of every change from now on; NULL:
@@ -176,12 +187,12 @@ void video_init(Video *v);
 void video_watch(Video *v, const VideoWatch *w);
 
 /* A screen's layout, everything on it cleared: the tiles, the layers'
- * cells and scroll, the colours black, the sprites, the screen off. The
- * game's: the backdrop is colour 0 of line 2. */
+ * cells and scroll, the colours black, the sprites, the divider, the
+ * screen off. The game's: the backdrop is colour 0 of line 2. */
 void video_start_game(Video *v, bool split);
 
-/* The menus' layout (M_VDPInit), nothing cleared but the sprites, the
- * screen off; the backdrop colour 0 of line 0. */
+/* The menus' layout (M_VDPInit), nothing cleared but the sprites and the
+ * divider, the screen off; the backdrop colour 0 of line 0. */
 void video_start_menus(Video *v);
 
 /* The screen on (the layers drawn) or off (the backdrop alone). */
@@ -218,8 +229,9 @@ void video_set_colours(Video *v, int first, const Cram *colours, int n);
 Cram video_colour(const Video *v, int index);
 
 /* The frame's sprites, from the first (on top): begun empty, the screen's
- * pushed, then video_sprites_game, then the game's. Past VIDEO_SPRITES a
- * push is refused (false). The list stays until it is begun again. */
+ * pushed, then video_sprites_game, then the game's. A push is refused
+ * (false) only when no memory is left. The list stays until it is begun
+ * again. */
 void video_sprites_begin(Video *v);
 bool video_sprite_push(Video *v, const Sprite *s);
 void video_sprites_game(Video *v);
@@ -238,6 +250,12 @@ void video_frame_done(Video *v);
 /* (Session 61) UNITS' units, drawn behind every other sprite (copied;
  * none: n 0). */
 void video_sprites_behind(Video *v, const Sprite *s, u32 n);
+
+/* (Session 81) The split game's divider, in front of everything at
+ * VIDEO_DIVIDER_X from the HUD strip down, drawn with `cell`'s tile on
+ * (VIDEO_DIVIDER_TILES x VIDEO_DIVIDER_TILES of them) and palette line;
+ * or none. Only the split layout draws it. */
+void video_divider(Video *v, bool on, Cell cell);
 
 /* (Session 72) Colour table n (1-15) for the sprites that name it; map
  * NULL: no table n again. */

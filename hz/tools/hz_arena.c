@@ -122,6 +122,7 @@
 #include "../src/core/video.h"
 #include "../src/core/pngwrite.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/nightmare.h"
 #include "../src/game/nm_atlas.h"
 #include "../src/game/replay.h"
@@ -154,7 +155,8 @@ static bool on_pad(Kind k)
  * DRIVE_FUEL, nor REGION: kept the opponent it was; (session 73) nor
  * EDGE, nor MIX_BUYS; (session 74) nor HOLD_BACK, CAPTURE_FREE, ONE_WAY,
  * CAPTURE_HOT, FLY_STRAIGHT, FIGHT_ON, SUPPLY, REPAIR, STRIKE; (session
- * 75) nor CAPTURE_NOBODY, CAPTURE_ROBOT, CAPTURE_OPEN, HOME_LANES. */
+ * 75) nor CAPTURE_NOBODY, CAPTURE_ROBOT, CAPTURE_OPEN, HOME_LANES;
+ * (session 81) nor FIGHT_COVER, FIGHT_GRAVE. */
 static const char *const TURTLE_PARAMS[] = { "style=1", "siege=0",
                                              "drop_range=112",
                                              "dog_range=0", "dog_guard=0",
@@ -174,7 +176,9 @@ static const char *const TURTLE_PARAMS[] = { "style=1", "siege=0",
                                              "home_lanes=0", "buy_home=0",
                                              "nest_wait=0",
                                              "strike_giveup=0",
-                                             "hunt_strike=0", "hunt_home=1" };
+                                             "hunt_strike=0", "hunt_home=1",
+                                             "fight_cover=0",
+                                             "fight_grave=0" };
 
 #ifdef HZ_ARENA_OLD_BRAIN
 /* (make hz_arena_ab) Another nightmare.c, built with its names renamed
@@ -246,7 +250,7 @@ typedef struct {
     bool  ahead;            /* --ahead */
     int   seen;             /* --seen (-1: all chosen) */
     bool  queued[2];        /* the side's pad comes from its queue */
-    u32   pass;             /* game_frame passes this game */
+    u32   pass;             /* frame loop passes this game */
     u8    queue[2][ARENA_QUEUE];
     /* --check-ahead: the copy's state at the end of the pass it thought
      * in, to meet the real game's there */
@@ -1149,7 +1153,7 @@ static void info(const HzAssets *as)
         game.options[0] = 1;
         game.options[1] = 0;
         game.options[3] = (u8)map;
-        if (!game_new(&game)) {
+        if (!tick_new(&game, NULL, NULL)) {
             printf("map %d: doesn't load\n", map);
             continue;
         }
@@ -1461,8 +1465,6 @@ int main(int argc, char **argv)
     for (int n = 0; n < games; n++) {
         video_init(&video);
         game_init(g, &assets, &video);
-        g->frame = on_frame;
-        g->frame_user = a;
         g->mech_probe = on_mech;
         g->mech_probe_user = a;
         if (a->check_hits) {
@@ -1504,14 +1506,14 @@ int main(int argc, char **argv)
             game_title_prepare(g);
             g->game_type = 0;
             g->quick_load = true;
-            if (game_setup_after_title(g) != HZ_SETUP_GAME) {
+            if (tick_setup(g, on_frame, a) != HZ_SETUP_GAME) {
                 fprintf(stderr, "hz_arena: the replay's map doesn't load\n");
                 return 1;
             }
             map = g->options[3] & 7;
             difficulty = g->options[1];
             a->reseed = seed + (unsigned long long)n;
-        } else if (!game_new(g)) {
+        } else if (!tick_new(g, on_frame, a)) {
             fprintf(stderr, "hz_arena: map %d doesn't load\n", map);
             return 1;
         } else {
@@ -1523,7 +1525,7 @@ int main(int argc, char **argv)
         if (a->unit_cap > 0) {
             memset(a->unit_flags, 0, a->unit_cap * sizeof *a->unit_flags);
         }
-        game_start(g);
+        tick_start(g, on_frame, a);
         if (ground) {
             ground_chart(g);
             return 0;
@@ -1556,7 +1558,7 @@ int main(int argc, char **argv)
         long post_secs[2] = { 0, 0 };
         long secs = 0;
         long tick = 0;
-        HzLoopExit exit = game_frame(g, false);
+        HzLoopExit exit = tick_pass(g, false, on_frame, a);
         while (exit == HZ_LOOP_ON) {
             if (++tick % 60 == 0) {
                 post_secs[0] += own_posts(g, 0);
@@ -1574,7 +1576,7 @@ int main(int argc, char **argv)
             if (timed) {
                 timespec_get(&t0, TIME_UTC);
             }
-            exit = game_frame(g, true);
+            exit = tick_pass(g, true, on_frame, a);
             if (timed) {
                 timespec_get(&t1, TIME_UTC);
                 double ms = (double)(t1.tv_sec - t0.tv_sec) * 1000.0
@@ -1646,9 +1648,9 @@ int main(int argc, char **argv)
         }
         fflush(stdout);
         g->quit = false;
-        /* (Session 62) and the frames, before the next game_new: the
+        /* (Session 62) and the frames, before the next tick_new: the
          * count left at --frames ended the next game in its first frames
-         * (on_frame's quit, from game_new's frames on) */
+         * (on_frame's quit, from tick_new's frames on) */
         a->frames = 0;
     }
     if (a->trace != NULL) {

@@ -23,6 +23,7 @@
 #include "../src/core/hz_file.h"
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/nightmare.h"
 #include "../src/game/replay.h"
 #include "../src/game/statehash.h"
@@ -701,24 +702,22 @@ int main(int argc, char **argv)
         p->fuel_max = assets.mech_stats.stats.fuel;
         video_init(&video);
         game_init(&g, &assets, &video);
-        g.frame = on_frame;
-        g.frame_user = p;
         g.snd_music_on = music_on;
         replay_apply_start(&g, &p->r);
         game_title_prepare(&g);
         g.game_type = 0;
         g.quick_load = true;
-        if (game_setup_after_title(&g) != HZ_SETUP_GAME) {
+        if (tick_setup(&g, on_frame, p) != HZ_SETUP_GAME) {
             fprintf(stderr, "hz_replay: %s: map %d doesn't load\n", argv[i],
                     p->r.options[3] & 7);
             bad++;
             continue;
         }
         p->started = true;
-        game_start(&g);
-        HzLoopExit exit = game_frame(&g, false);
+        tick_start(&g, on_frame, p);
+        HzLoopExit exit = tick_pass(&g, false, on_frame, p);
         while (exit == HZ_LOOP_ON) {
-            exit = game_frame(&g, true);
+            exit = tick_pass(&g, true, on_frame, p);
         }
         bool same = p->split < 0
                     && (exit == HZ_LOOP_GAME_OVER) == (p->r.winner >= 0)

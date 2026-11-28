@@ -56,8 +56,10 @@
  * hashes did: the draw layer (docs/hackable.md, step 1) loads tiles and
  * clears the screen without DMA, so the VDP's DMA registers (19-23) no
  * longer hold what those uploads left, and the layer's own store (half B)
- * changes it again. */
-#define NET_GAME_CODE 13
+ * changes it again. 14 (session 81): every sprite drawn (step 1's rest: no
+ * cap, no flicker, the divider the layer's), so the frames and the
+ * sprites a split-screen game hashes differ. */
+#define NET_GAME_CODE 14
 
 #define NET_RING       256      /* frames of pads kept a side */
 #define NET_HASH_EVERY 60       /* a state hash a second */

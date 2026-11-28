@@ -30,6 +30,7 @@
 
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 #include "../src/game/tables.h"
 
@@ -711,14 +712,13 @@ static int run_game(const HzAssets *assets, Dump *d, int map, int mode,
     video_init(&video);
     game_init(&game, assets, &video);
     HzGame *g = &game;
-    g->frame = frame_hook;
     g->options[0] = (u8)mode;
     g->options[1] = (u8)difficulty;
     g->options[3] = (u8)map;
-    if (!game_new(g)) {
+    if (!tick_new(g, frame_hook, NULL)) {
         return 1;
     }
-    game_start(g);
+    tick_start(g, frame_hook, NULL);
 
     fwrite("HZM1", 1, 4, d->in);
     static u8 buf[HZ_BLOCKS * 32];
@@ -748,7 +748,7 @@ static int run_game(const HzAssets *assets, Dump *d, int map, int mode,
                 poke_ai(g, p);
             }
         }
-        HzLoopExit e = game_frame(g, true);
+        HzLoopExit e = tick_pass(g, true, frame_hook, NULL);
         if (e != HZ_LOOP_ON) {
             break;
         }

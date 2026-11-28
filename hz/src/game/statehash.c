@@ -397,6 +397,7 @@ static void hash_display(const Video *v, u64 part[STATE_HASH_PARTS])
             h = state_fnv(h, v->sprite_colours[n], 16);
         }
     }
+    h = fnv16(h, v->divider ? cell_word(v->divider_cell) : 0);  /* (s. 81) */
     part[9] = h;
 }
 

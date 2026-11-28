@@ -1,4 +1,5 @@
 #include "game.h"
+#include "front.h"
 #include "paths.h"
 
 #include <stddef.h>
@@ -34,17 +35,21 @@ void game_init(HzGame *g, const HzAssets *assets, Video *video)
     g->save_slot = -1;
 }
 
-/* HBlank ($4760), once per frame: the HInt counter is 30, so the first
- * interrupt comes after line 30. Unless the main loop has blocked it
- * (v_split_done set), it writes sprite 5's link word back: the game's
- * sprites, held back from the top of the frame, are drawn from line 32
- * (the VDP reads sprite links a line ahead), so the HUD strip's 32 lines
- * never show one.
+/* (Session 81, docs/hackable.md step 2 item 5) What the 68k's interrupt
+ * handlers, its interrupt mask and the display-off bit come to in a
+ * frame: the work at a frame's start (VBlank's), the HUD strip let go
+ * part-way down it (HBlank's), that work held while the game is busy
+ * (the mask), and a frame not shown (the display off).
  *
- * The 68k's handler runs part-way through the frame, while the main loop
- * is busy; the port decides it when the frame is handed over, with
- * v_split_done as the main loop left it. */
-static void hblank(HzGame *g)
+ * The HUD strip let go ($4760, HBlank: the HInt counter is 30, so after
+ * line 30), once a frame: unless the game has kept it (v_split_done
+ * set), the game's sprites, held back from the top of the frame, are
+ * drawn from line 32 (the VDP reads sprite links a line ahead; the 68k
+ * writes sprite 5's link word back), so the HUD strip's 32 lines never
+ * show one. On the 68k it comes part-way through the frame, while the
+ * game is busy; here it is decided as the frame is shown, with
+ * v_split_done as the game left it. */
+static void hud_release(HzGame *g)
 {
     if (g->split_done) {
         return;
@@ -53,10 +58,11 @@ static void hblank(HzGame *g)
     g->split_done++;
 }
 
-/* VBlank ($4788): with the split screen running, sprite 5's link cut (size
- * kept, link 0): the game's sprites held back from the top of the next
- * frame, for HBlank to let back; count the frame, saturating. */
-static void vblank(HzGame *g)
+/* A game frame's start ($4788, VBlank): with the split screen running,
+ * the game's sprites held back from the top of the frame (the 68k cuts
+ * sprite 5's link, size kept, link 0), for hud_release to let go; the
+ * frame counted, saturating. */
+static void frame_start(HzGame *g)
 {
     if (g->split_enable) {
         video_sprites_hold(g->video, true);
@@ -67,65 +73,105 @@ static void vblank(HzGame *g)
     }
 }
 
-/* The L6 stub's target: VBlank, or VBlank_Loading while the map loads. */
-static void vblank_handler(HzGame *g)
+/* The work at a frame's start: the game's, or, while the map loads, the
+ * loading screen's (load_screen_frame; on the 68k the L6 stub's target,
+ * VBlank or VBlank_Loading). */
+static void frame_start_work(HzGame *g)
 {
-    if (g->vblank_loading) {
-        vblank_loading(g);
+    if (g->load_screen_on) {
+        load_screen_frame(g);
     } else {
-        vblank(g);
+        frame_start(g);
     }
 }
 
-/* VDP_WaitVBlank ($ABE). With the display off it returns at once: the 68k
- * doesn't wait, and the port lets no frame pass. Otherwise the frame that
- * was on screen is complete: hand it over, then run the VBlank handler,
- * which on the 68k fires as the wait ends. With interrupts masked the VDP
- * holds the interrupt until they're unmasked (game_unmask). */
-void game_wait_vblank(HzGame *g)
+/* A frame the game has made (VDP_WaitVBlank, $ABE), in two, game_tick
+ * handing it to the host between them. frame_shown: false with the
+ * screen off -- the 68k doesn't wait then, and no frame passes; else the
+ * HUD strip let go if the game's frame work is on. frame_next, as the
+ * next tick begins: the frame done, and the next one's start work -- or,
+ * while that work is held (frame_work_on false), owed until it is let go
+ * (game_frame_work_on). */
+static bool frame_shown(HzGame *g)
 {
-    if (!(g->vdp_reg1 & 0x40)) {
-        return;
+    if (!g->screen_on) {
+        return false;
     }
-    if (g->interrupts_on) {
-        hblank(g);
+    if (g->frame_work_on) {
+        hud_release(g);
     }
-    if (g->frame != NULL) {
-        g->frame(g, g->frame_user);
-    }
+    return true;
+}
+
+static void frame_next(HzGame *g)
+{
     video_frame_done(g->video);
-    if (g->interrupts_on) {
-        vblank_handler(g);
+    if (g->frame_work_on) {
+        frame_start_work(g);
     } else {
-        g->vblank_pending = true;
+        g->frame_start_owed = true;
     }
 }
 
-/* move.w #$2000,sr: interrupts unmasked. A VBlank the VDP held while they
- * were masked is taken at once: so Game_Start's fade (masked) leaves one
- * for the frame loop's start, and v_frame_counter starts at 1. (HBlank's
- * is held the same way, but wherever the 68k unmasks, v_split_done is
- * set and HBlank would do nothing.) */
-void game_unmask(HzGame *g)
+void game_run_begin(HzGame *g, HzRun (*step)(HzGame *g), bool menus)
 {
-    g->interrupts_on = true;
-    if (g->vblank_pending) {
-        g->vblank_pending = false;
-        vblank_handler(g);
+    g->tick_step = step;
+    g->tick_menus = menus;
+    g->tick_resume = false;
+}
+
+HzTick game_tick(HzGame *g)
+{
+    if (g->tick_resume) {
+        g->tick_resume = false;
+        if (!g->tick_menus) {
+            frame_next(g);
+        }
+    }
+    while (g->tick_step != NULL) {
+        HzRun run = g->tick_step(g);
+        if (run == HZ_RUN_DONE) {
+            g->tick_step = NULL;
+            break;
+        }
+        if (run == HZ_RUN_EVENT) {
+            return HZ_TICK_EVENT;
+        }
+        if (g->tick_menus ? front_frame_shown(g) : frame_shown(g)) {
+            g->tick_resume = true;
+            return HZ_TICK_FRAME;
+        }
+    }
+    return HZ_TICK_DONE;
+}
+
+/* The game's frame work let go again (move.w #$2000,sr: interrupts
+ * unmasked). A frame start owed while it was held runs now, once however
+ * many frames went by: so Game_Start's fade (held) leaves one for the
+ * frame loop's start, and v_frame_counter starts at 1. (The HUD strip's
+ * release is held the same way, but wherever the 68k unmasks,
+ * v_split_done is set and it would do nothing.) */
+void game_frame_work_on(HzGame *g)
+{
+    g->frame_work_on = true;
+    if (g->frame_start_owed) {
+        g->frame_start_owed = false;
+        frame_start_work(g);
     }
 }
 
-/* VDP_DisplayOn ($A7A) / VDP_DisplayOff ($A8C) */
+/* The screen on or off (VDP_DisplayOn, $A7A; VDP_DisplayOff, $A8C): off,
+ * the game's waits for a frame make none. */
 void game_display_on(HzGame *g)
 {
     video_display(g->video, true);
-    g->vdp_reg1 = 0x8164;
+    g->screen_on = true;
 }
 
 void game_display_off(HzGame *g)
 {
     video_display(g->video, false);
-    g->vdp_reg1 = 0x8124;
+    g->screen_on = false;
 }
 
 /* Game_SetViewCameras ($514): which camera each plane's view follows.
@@ -201,8 +247,9 @@ u32 game_random(HzGame *g)
 }
 
 /* MainLoop_Title ($41C) up to MenuModule_Title: the music stopped now
- * and every effect, game over cleared, interrupts masked, the split
- * blocked (v_split_done 1, v_hud_sprite_cut 0: the word $100). */
+ * and every effect, game over cleared, the frame work held (interrupts
+ * masked), the split blocked (v_split_done 1, v_hud_sprite_cut 0: the
+ * word $100). */
 void game_title_prepare(HzGame *g)
 {
     video_sprites_behind(g->video, NULL, 0);    /* (session 61) a crowd's */
@@ -211,29 +258,45 @@ void game_title_prepare(HzGame *g)
     snd_fade_music(g, 0);
     snd_stop_sfx(g);
     g->game_over = 0;
-    g->interrupts_on = false;                           /* #$2700 */
+    g->frame_work_on = false;                           /* #$2700 */
     g->split_done = 1;
     g->hud_sprite_cut = 0;
     g->split_enable = 0;
 }
 
-/* MainLoop_Title after MenuModule_Title: interrupts masked, v_game_type
- * (the host's, from menu_title_flow), Game_SetupMode, VDP_Init,
+/* MainLoop_Title after MenuModule_Title: the frame work held, v_game_type
+ * (the host's, from game_title_result), Game_SetupMode, VDP_Init,
  * Game_LoadMap; a load aborted from a demo's loading screen goes back to
  * the title (HZ_SETUP_ABORTED). Then .clear_ram: $FF7000-$FFEFFF cleared,
  * every game starting with the $FF8000 block (scroll, cameras, mechs,
  * units, queues, the menu module's RAM) zeroed -- here the fields from
  * sprite_count on; Map_ScanOutposts. Game_Start follows. */
-HzSetup game_setup_after_title(HzGame *g)
+bool game_begin_setup(HzGame *g)
 {
-    g->interrupts_on = false;
+    if (!game_setup_begin(g)) {
+        g->setup_result = HZ_SETUP_NO_MAP;
+        return false;
+    }
+    game_run_begin(g, game_setup_step, false);
+    return true;
+}
+
+bool game_setup_begin(HzGame *g)
+{
+    g->frame_work_on = false;
     game_setup_mode(g);
     screen_start_game(g);
-    if (!game_load_map(g)) {
-        return HZ_SETUP_NO_MAP;
+    return game_load_map_begin(g);
+}
+
+HzRun game_setup_step(HzGame *g)
+{
+    if (game_load_map_step(g) == HZ_RUN_FRAME) {
+        return HZ_RUN_FRAME;
     }
     if (g->load_abort) {
-        return HZ_SETUP_ABORTED;
+        g->setup_result = HZ_SETUP_ABORTED;
+        return HZ_RUN_DONE;
     }
     size_t from = offsetof(HzGame, sprite_count);
     HzNightmare nm[2];
@@ -244,17 +307,179 @@ HzSetup game_setup_after_title(HzGame *g)
     }
     units_reset(g);                 /* (session 61) the units' lists */
     map_scan_outposts(g);
-    return HZ_SETUP_GAME;
+    g->setup_result = HZ_SETUP_GAME;
+    return HZ_RUN_DONE;
 }
 
 /* The whole of MainLoop_Title but the menus, for the harnesses, which set
  * v_options themselves. The loading screen's frames aren't handed over
- * (quick_load). True when a game is ready to start. */
-bool game_new(HzGame *g)
+ * (quick_load). False for a map past the eight; ready to start when
+ * g->setup_result is HZ_SETUP_GAME. */
+bool game_begin_new(HzGame *g)
 {
     game_title_prepare(g);
     g->quick_load = true;
-    return game_setup_after_title(g) == HZ_SETUP_GAME;
+    return game_begin_setup(g);
+}
+
+/* (Session 81, docs/hackable.md step 2) MainLoop_Title ($41C), the
+ * game's own sequence: its phases, from the loop's top round to it again
+ * (main_step). Each _TELL phase is where the host is told (main_tell)
+ * and the next goes on when it ticks again. */
+enum {
+    MAIN_TOP,
+    MAIN_PREPARE,
+    MAIN_TITLE_BEGIN,
+    MAIN_TITLE,
+    MAIN_SETUP_BEGIN,
+    MAIN_SETUP,
+    MAIN_START_BEGIN,
+    MAIN_START,
+    MAIN_PASS_BEGIN,
+    MAIN_PASS,
+    MAIN_OVER_BEGIN,
+    MAIN_OVER
+};
+
+static HzRun main_tell(HzGame *g, HzEvent event, u8 next)
+{
+    g->event = (u8)event;
+    g->main_phase = next;
+    return HZ_RUN_EVENT;
+}
+
+/* Back to the loop's top, or (once round) done. */
+static bool main_again(HzGame *g)
+{
+    g->tick_menus = false;
+    g->main_phase = MAIN_TOP;
+    return !(g->main_flags & HZ_MAIN_ONCE);
+}
+
+/* The loop: its top (the host told, then game_title_prepare, v_game_type
+ * 0); MenuModule_Title
+ * (the menus' frames; -1 in v_game_type when the title ran out, the
+ * attract demo); the setup (MainLoop_Title after the menus: the loading
+ * screen; a demo's load aborted with Start goes back to the top);
+ * Game_Start; the passes, the first entering past ReadJoypads; Game_Over
+ * to the title if an HQ fell. A quit ends it at the top, after the title
+ * and after the setup; a pass the quit ends ends the game (g->frame_exit
+ * HZ_LOOP_QUIT), then the top. */
+static HzRun main_step(HzGame *g)
+{
+    for (;;) {
+        switch (g->main_phase) {
+            case MAIN_TOP: {
+                if (g->quit) {
+                    return HZ_RUN_DONE;
+                }
+                return main_tell(g, HZ_EVENT_TITLE, MAIN_PREPARE);
+            }
+            case MAIN_PREPARE: {
+                game_title_prepare(g);
+                g->game_type = 0;
+                g->main_phase = MAIN_TITLE_BEGIN;
+                break;
+            }
+            case MAIN_TITLE_BEGIN: {
+                if (g->main_flags & HZ_MAIN_NO_TITLE) {
+                    g->main_flags &= (u8)~HZ_MAIN_NO_TITLE;
+                    return main_tell(g, HZ_EVENT_SETUP, MAIN_SETUP_BEGIN);
+                }
+                menu_title_flow_begin(g);
+                g->tick_menus = true;
+                g->main_phase = MAIN_TITLE;
+                break;
+            }
+            case MAIN_TITLE: {
+                if (menu_title_flow_step(g) == HZ_RUN_FRAME) {
+                    return HZ_RUN_FRAME;
+                }
+                g->tick_menus = false;
+                g->game_type = (s16)game_title_result(g);
+                if (g->quit) {
+                    return HZ_RUN_DONE;
+                }
+                return main_tell(g, HZ_EVENT_SETUP, MAIN_SETUP_BEGIN);
+            }
+            case MAIN_SETUP_BEGIN: {
+                if (!game_setup_begin(g)) {
+                    g->setup_result = HZ_SETUP_NO_MAP;
+                    return HZ_RUN_DONE;
+                }
+                g->main_phase = MAIN_SETUP;
+                break;
+            }
+            case MAIN_SETUP: {
+                if (game_setup_step(g) == HZ_RUN_FRAME) {
+                    return HZ_RUN_FRAME;
+                }
+                if (g->setup_result == HZ_SETUP_ABORTED || g->quit) {
+                    if (!main_again(g)) {
+                        return HZ_RUN_DONE;
+                    }
+                    break;
+                }
+                return main_tell(g, HZ_EVENT_GAME, MAIN_START_BEGIN);
+            }
+            case MAIN_START_BEGIN: {
+                game_start_begin(g);
+                g->main_phase = MAIN_START;
+                break;
+            }
+            case MAIN_START: {
+                if (game_start_step(g) == HZ_RUN_FRAME) {
+                    return HZ_RUN_FRAME;
+                }
+                game_frame_begin(g, false);
+                g->main_phase = MAIN_PASS;
+                break;
+            }
+            case MAIN_PASS_BEGIN: {
+                game_frame_begin(g, true);
+                g->main_phase = MAIN_PASS;
+                break;
+            }
+            case MAIN_PASS: {
+                if (game_frame_step(g) == HZ_RUN_FRAME) {
+                    return HZ_RUN_FRAME;
+                }
+                if (g->frame_exit == HZ_LOOP_ON) {
+                    return main_tell(g, HZ_EVENT_PASS, MAIN_PASS_BEGIN);
+                }
+                return main_tell(g, HZ_EVENT_ENDED, MAIN_OVER_BEGIN);
+            }
+            case MAIN_OVER_BEGIN: {
+                if (g->frame_exit != HZ_LOOP_GAME_OVER) {
+                    if (!main_again(g)) {
+                        return HZ_RUN_DONE;
+                    }
+                    break;
+                }
+                game_over_begin(g);
+                g->main_phase = MAIN_OVER;
+                break;
+            }
+            default: {                                  /* MAIN_OVER */
+                if (game_over_run_step(g) == HZ_RUN_FRAME) {
+                    return HZ_RUN_FRAME;
+                }
+                if (!main_again(g)) {
+                    return HZ_RUN_DONE;
+                }
+                break;
+            }
+        }
+    }
+}
+
+void game_begin_main(HzGame *g, unsigned flags)
+{
+    g->main_phase = MAIN_TOP;
+    g->main_flags = (u8)flags;
+    g->event = HZ_EVENT_NONE;
+    g->setup_result = HZ_SETUP_GAME;
+    game_run_begin(g, main_step, false);
 }
 
 /* Game_Start ($634). Clears the per-game counters (of those, the ported
@@ -267,13 +492,13 @@ bool game_new(HzGame *g)
  * gives a CPU player its starting units. (Record modes 1-3, a development
  * leftover, aren't ported: v_record_mode is never set in the shipping
  * game.) Then .screen: v_cpu_boost_hq_hp = $199 + (Random >> 15 & $1FF),
- * and with the display off and interrupts masked the fixed sprites,
- * mechs, views and scroll; display on, the fade in (the loading screen's
- * mechs still on screen: the sprite table isn't uploaded until the frame
- * loop's first pass ends), interrupts on (the VBlank held through the
- * fade counts a frame). Game_FrameLoop follows (at Game_FrameLoopEntry,
+ * and with the screen off and the frame work held the fixed sprites,
+ * mechs, views and scroll; the screen on, the fade in (the loading
+ * screen's mechs still on screen: the sprite table isn't uploaded until
+ * the frame loop's first pass ends), the frame work on (the frame start
+ * owed through the fade counts a frame). Game_FrameLoop follows (at Game_FrameLoopEntry,
  * the pad cleared). */
-void game_start(HzGame *g)
+void game_start_begin(HzGame *g)
 {
     g->unit_team_toggle = 0;
     g->unit_ai_group = 0;
@@ -308,17 +533,54 @@ void game_start(HzGame *g)
     u32 r = game_random(g);                             /* .screen */
     g->cpu_boost_hq_hp = (u16)(((r >> 15) & 0x1FF) + 0x199);
     game_display_off(g);
-    g->interrupts_on = false;                           /* #$2700 */
-    sprites_init_fixed(g);
+    g->frame_work_on = false;                           /* #$2700 */
     mechs_init(g);
     map_draw_views(g);
     map_flush_scroll(g);
     game_display_on(g);
-    palette_fade_in_map(g);
-    game_unmask(g);                                     /* #$2000 */
+    palette_fade_in_map_begin(g);
+}
+
+/* Game_Start from Palette_FadeInMap on: its frames, then the frame work on
+ * and the pad cleared. */
+HzRun game_start_step(HzGame *g)
+{
+    if (palette_fade_in_map_step(g) == HZ_RUN_FRAME) {
+        return HZ_RUN_FRAME;
+    }
+    game_frame_work_on(g);                              /* #$2000 */
     g->joypad[0] = 0;                                   /* clr.w v_joypad1 */
     g->joypad[1] = 0;
+    return HZ_RUN_DONE;
 }
+
+void game_begin_start(HzGame *g)
+{
+    game_start_begin(g);
+    game_run_begin(g, game_start_step, false);
+}
+
+/* The pause's phases (game_pause_step): its first frame; Start still
+ * held, pressed again, let go; the last VBlank. */
+enum {
+    PAUSE_FIRST,
+    PAUSE_RELEASE,
+    PAUSE_PRESS,
+    PAUSE_UNPAUSE,
+    PAUSE_LAST
+};
+
+/* The frame loop's pass's phases (game_frame_step): its start (the pads,
+ * Game_CheckPause), a pause, after its VDP_WaitVBlank. And for
+ * game_begin_frame_end, the pass from its VDP_WaitVBlank on; for
+ * game_begin_wait, a VDP_WaitVBlank alone, then done. */
+enum {
+    FRAME_ENTRY,
+    FRAME_PAUSED,
+    FRAME_END,
+    FRAME_WAIT,
+    FRAME_WAITED
+};
 
 /* A 3-button pad's data lines (bits 5-0, active low) with TH, the select
  * line, as the 68k last wrote it (bit 6 reads it back): TH 1 gives C B R L
@@ -373,17 +635,17 @@ void game_read_joypads(HzGame *g)
 }
 
 /* Pause_Frame ($44A2): a frame without updating the game. The VBlank,
- * then with HBlank's relink blocked and the display off the multiplexer
- * and the sprite upload (so the flicker goes on), display on, split
+ * then with HBlank's relink blocked and the display off the sprite
+ * upload (on the cartridge the multiplexer first, so the flicker went on;
+ * session 81: every sprite drawn), display on, split
  * re-enabled, the pads read. Returns them OR'd. Unlike the main loop it
- * switches the display with VDP_DisplayOff/On, which keep v_vdp_reg1. */
+ * switches the display with VDP_DisplayOff/On, which keep v_vdp_reg1.
+ * Here from after the VBlank: the frame is game_pause_step's. */
 static u8 pause_frame(HzGame *g)
 {
-    game_wait_vblank(g);
     g->split_enable = 0;
     g->split_done = 1;
     game_display_off(g);
-    sprites_multiplex(g);
     sprites_upload(g);
     game_display_on(g);
     g->split_enable = 1;
@@ -405,8 +667,11 @@ static u8 pause_frame(HzGame *g)
  * past Game_SecondTick's $E10); otherwise Demo_PlayInput feeds the
  * recorded pads. v_record_mode 1-3 would run the development recorder
  * instead (not ported: never set). The pause loops also end on the
- * host's quit, the port's own. */
-void game_check_pause(HzGame *g)
+ * host's quit, the port's own.
+ *
+ * (Session 80) Up to the pause here; true when there is one, and then
+ * game_pause_step has its frames. */
+bool game_check_pause_begin(HzGame *g)
 {
     u8 pads = (u8)(g->joypad[0] | g->joypad[1]);
     if (g->game_type < 0) {
@@ -415,34 +680,67 @@ void game_check_pause(HzGame *g)
         } else {
             demo_play_input(g);
         }
-        return;
+        return false;
     }
     if (!(pads & HZ_PAD_START)) {
-        return;                                         /* .done */
+        return false;                                   /* .done */
     }
 
-    u32 saved = g->frame_counter;
+    g->pause_saved_frames = g->frame_counter;
     snd_pause(g, pads);
     sprites_build(g);
+    g->pause_phase = PAUSE_FIRST;
+    return true;
+}
+
+/* The pause, a frame a step: each loop's Pause_Frame is a frame, then its
+ * work (pause_frame) and the loop's test; the last VBlank, then
+ * v_frame_counter put back. Quit ends it after .wait_press's frame, as
+ * there, with the counter left. */
+HzRun game_pause_step(HzGame *g)
+{
     u8 d0;
-    do {
-        d0 = pause_frame(g);                            /* .wait_release */
-    } while ((d0 & HZ_PAD_START) && !g->quit);
-    do {
-        d0 = pause_frame(g);                            /* .wait_press */
-    } while (!(d0 & HZ_PAD_START) && !g->quit);
-    if (g->quit) {
-        return;
+    switch (g->pause_phase) {
+        case PAUSE_FIRST: {
+            g->pause_phase = PAUSE_RELEASE;
+            return HZ_RUN_FRAME;
+        }
+        case PAUSE_RELEASE: {                           /* .wait_release */
+            d0 = pause_frame(g);
+            if (!(d0 & HZ_PAD_START) || g->quit) {
+                g->pause_phase = PAUSE_PRESS;
+            }
+            return HZ_RUN_FRAME;
+        }
+        case PAUSE_PRESS: {                             /* .wait_press */
+            d0 = pause_frame(g);
+            if (!(d0 & HZ_PAD_START) && !g->quit) {
+                return HZ_RUN_FRAME;
+            }
+            if (g->quit) {
+                return HZ_RUN_DONE;
+            }
+            if (!((g->mech[0].flags | g->mech[1].flags) & MECH_CPU)
+                && d0 == 0xFF) {
+                g->free_ammo = (u16)((g->free_ammo ^ 1) & 1);
+            }
+            g->pause_phase = PAUSE_UNPAUSE;
+            return HZ_RUN_FRAME;
+        }
+        case PAUSE_UNPAUSE: {                           /* .wait_unpause */
+            d0 = pause_frame(g);
+            if ((d0 & HZ_PAD_START) && !g->quit) {
+                return HZ_RUN_FRAME;
+            }
+            snd_pause(g, d0);
+            g->pause_phase = PAUSE_LAST;
+            return HZ_RUN_FRAME;
+        }
+        default: {                                      /* PAUSE_LAST */
+            g->frame_counter = g->pause_saved_frames;
+            return HZ_RUN_DONE;
+        }
     }
-    if (!((g->mech[0].flags | g->mech[1].flags) & MECH_CPU) && d0 == 0xFF) {
-        g->free_ammo = (u16)((g->free_ammo ^ 1) & 1);
-    }
-    do {
-        d0 = pause_frame(g);                            /* .wait_unpause */
-    } while ((d0 & HZ_PAD_START) && !g->quit);
-    snd_pause(g, d0);
-    game_wait_vblank(g);
-    g->frame_counter = saved;
 }
 
 /* HQ p's HP: the word at v_hq + p x 8 + 2. */
@@ -493,7 +791,7 @@ HzLoopExit game_second_tick(HzGame *g)
     }
 
     if (hq_hp(g, 0) == 0) {                             /* .check_hqs */
-        g->interrupts_on = false;                       /* .p2_wins */
+        g->frame_work_on = false;                       /* .p2_wins */
         g->winner = 1;
         /* FIX (HZ_FIX_DRAW, network games): P2's HQ down too, a draw */
         if ((g->fixes & HZ_FIX_DRAW) && hq_hp(g, 1) == 0) {
@@ -502,7 +800,7 @@ HzLoopExit game_second_tick(HzGame *g)
         return HZ_LOOP_GAME_OVER;
     }
     if (hq_hp(g, 1) == 0) {
-        g->interrupts_on = false;                       /* .p1_wins */
+        g->frame_work_on = false;                       /* .p1_wins */
         g->winner = 0;
         return HZ_LOOP_GAME_OVER;
     }
@@ -543,17 +841,23 @@ HzLoopExit game_second_tick(HzGame *g)
  * UnitAI_Update and Combat_Update (skipped in v_record_mode 1/3: never
  * set; with them skipped v_unit_ai_group would stay put, and at 0 the
  * map would animate every frame), then game_frame_draw (HUD_UpdateGauges
- * on) and game_frame_end. Not ported yet: UnitAI_Update's units (its
- * group step is). */
-HzLoopExit game_frame(HzGame *g, bool read_pads)
+ * on), VDP_WaitVBlank and frame_uploads. Not ported yet: UnitAI_Update's
+ * units (its group step is). */
+static void frame_uploads(HzGame *g);
+
+void game_frame_begin(HzGame *g, bool read_pads)
 {
-    grid_sync(g);           /* (session 61) UNITS on or off: crowd.c */
-    if (read_pads) {
-        game_read_joypads(g);
-    }
-    game_check_pause(g);                                /* ...Entry */
+    g->frame_phase = FRAME_ENTRY;
+    g->frame_read_pads = read_pads;
+}
+
+/* The pass after Game_CheckPause, up to its VDP_WaitVBlank (a frame), or
+ * to its end where it ends early. */
+static HzRun frame_logic(HzGame *g)
+{
     if (g->quit) {
-        return HZ_LOOP_QUIT;
+        g->frame_exit = HZ_LOOP_QUIT;
+        return HZ_RUN_DONE;
     }
     if (g->fixes & HZ_FIX_TURRETS) {
         g->turrets = true;      /* (session 60) on once: on this game */
@@ -564,7 +868,8 @@ HzLoopExit game_frame(HzGame *g, bool read_pads)
     }
     HzLoopExit exit = game_second_tick(g);
     if (exit != HZ_LOOP_ON) {
-        return exit;
+        g->frame_exit = (u8)exit;
+        return HZ_RUN_DONE;
     }
     mechs_update(g);
     unit_ai_update(g);
@@ -576,8 +881,55 @@ HzLoopExit game_frame(HzGame *g, bool read_pads)
         g->combat_probe(g, true, g->combat_probe_user);
     }
     game_frame_draw(g);
-    game_frame_end(g);
-    return g->quit ? HZ_LOOP_QUIT : HZ_LOOP_ON;
+    g->frame_phase = FRAME_END;
+    return HZ_RUN_FRAME;
+}
+
+/* A pause's frames, then the rest of the pass. */
+static HzRun frame_paused(HzGame *g)
+{
+    if (game_pause_step(g) == HZ_RUN_FRAME) {
+        return HZ_RUN_FRAME;
+    }
+    return frame_logic(g);
+}
+
+HzRun game_frame_step(HzGame *g)
+{
+    switch (g->frame_phase) {
+        case FRAME_WAIT: {
+            g->frame_phase = FRAME_END;
+            return HZ_RUN_FRAME;
+        }
+        case FRAME_WAITED: {
+            return HZ_RUN_DONE;
+        }
+        case FRAME_ENTRY: {
+            grid_sync(g);   /* (session 61) UNITS on or off: crowd.c */
+            if (g->frame_read_pads) {
+                game_read_joypads(g);
+            }
+            if (!game_check_pause_begin(g)) {           /* ...Entry */
+                return frame_logic(g);
+            }
+            g->frame_phase = FRAME_PAUSED;
+            return frame_paused(g);
+        }
+        case FRAME_PAUSED: {
+            return frame_paused(g);
+        }
+        default: {                                      /* FRAME_END */
+            frame_uploads(g);
+            g->frame_exit = (u8)(g->quit ? HZ_LOOP_QUIT : HZ_LOOP_ON);
+            return HZ_RUN_DONE;
+        }
+    }
+}
+
+void game_begin_pass(HzGame *g, bool read_pads)
+{
+    game_frame_begin(g, read_pads);
+    game_run_begin(g, game_frame_step, false);
 }
 
 /* Game_FrameLoop ($700) from HUD_UpdateGauges to VDP_WaitVBlank. */
@@ -587,7 +939,6 @@ void game_frame_draw(HzGame *g)
     map_anim_tiles_update(g);
     sprites_build(g);
     map_scroll_update(g);
-    sprites_multiplex(g);
 }
 
 /* Game_FrameLoop ($700) from VDP_WaitVBlank on. The finished frame goes
@@ -596,9 +947,31 @@ void game_frame_draw(HzGame *g)
  * uploads; display on, split re-enabled, sound effects out. The display
  * register is written straight to the VDP here, so v_vdp_reg1 keeps its
  * $8164. Not ported yet: the v_dev_heal_mechs tail (never set). */
-void game_frame_end(HzGame *g)
+void game_begin_frame_end(HzGame *g)
 {
-    game_wait_vblank(g);
+    g->frame_phase = FRAME_WAIT;
+    game_run_begin(g, game_frame_step, false);
+}
+
+/* VDP_WaitVBlank alone: its frame, then done. */
+static HzRun wait_step(HzGame *g)
+{
+    if (g->frame_phase == FRAME_WAITED) {
+        return HZ_RUN_DONE;
+    }
+    g->frame_phase = FRAME_WAITED;
+    return HZ_RUN_FRAME;
+}
+
+void game_begin_wait(HzGame *g)
+{
+    g->frame_phase = FRAME_ENTRY;
+    game_run_begin(g, wait_step, false);
+}
+
+/* Game_FrameLoop after its VDP_WaitVBlank. */
+static void frame_uploads(HzGame *g)
+{
     g->split_enable = 0;
     g->split_done = 1;
     video_display(g->video, false);

@@ -4,30 +4,35 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The sprite pipeline: Sprites_Build fills v_sprite_list every frame,
- * Sprites_Multiplex picks the 70 entries shown this frame, and
- * VDP_UploadSprites (after the VBlank wait) hands the draw layer sprites
- * 0-9 from v_sprite_fixed and the 70 behind them, in screen pixels, and
- * the mechs' frames.
+/* The sprite pipeline: Sprites_Build fills the frame's list every frame,
+ * and VDP_UploadSprites (after the frame) hands the draw layer the mechs'
+ * four fixed sprites and the whole list, and the mechs' frames.
+ * (Session 81, docs/hackable.md step 1) Every sprite is drawn:
+ * Sprites_Multiplex, which on the cartridge picked the 70 entries shown
+ * each frame (the flicker), the window and the links are gone.
  *
- * Sprite coordinates in the RAM list are the cartridge's (screen +
- * $80). All arithmetic is on 68k words, so it is done in u16 and wraps
- * as the 68k's does; the unsigned compares against a width stand for the
- * 68k's cmp.w / bcc, which also reject what lies left of or above the
- * view (negative).
+ * The drawers work in the cartridge's coordinates (screen + $80), as the
+ * 68k does; an entry is put in screen pixels as it is added
+ * (sprite_from_ram: 9 bits of each, less the 128). All arithmetic is on
+ * 68k words, so it is done in u16 and wraps as the 68k's does; the
+ * unsigned compares against a width stand for the 68k's cmp.w / bcc,
+ * which also reject what lies left of or above the view (negative).
  *
  * The 68k keeps a0 pointing at the next free list entry and
  * v_sprite_count counting them; every drawer advances both together, so
  * here the count is the index. */
 
 /* One list entry. */
+static void list_set(HzGame *g, int at, u16 y, u16 size_link, u16 attr,
+                     u16 x)
+{
+    const HzSprite r = { y, size_link, attr, x };
+    g->sprite_list[at] = sprite_from_ram(&r);
+}
+
 static void list_add(HzGame *g, u16 y, u16 size_link, u16 attr, u16 x)
 {
-    HzSprite *s = &g->sprite_list[g->sprite_count++];
-    s->y = y;
-    s->size_link = size_link;
-    s->attr = attr;
-    s->x = x;
+    list_set(g, g->sprite_count++, y, size_link, attr, x);
 }
 
 /* tst.b (v_sprite_count): the count's high byte, i.e. 256 or more. */
@@ -293,27 +298,20 @@ static void draw_unit(HzGame *g, HzUnit *u, const UnitView *v)
     u16 sy = (u16)(y + 0x80);
     list_add(g, sy, u->sprite_size, u->sprite_attr, sx);
     if (overlay >= 0) {
-        HzSprite *o = &g->sprite_list[overlay];
-        o->y = sy;
-        o->size_link = u->sprite_size;
-        o->attr = u->overlay_attr;
-        o->x = sx;
+        list_set(g, overlay, sy, u->sprite_size, u->overlay_attr, sx);
     }
     if (marker >= 0) {
-        HzSprite *k = &g->sprite_list[marker];
-        k->y = sy;
-        k->size_link = 0x0500;
-        k->attr = 0x2590;
-        k->x = sx;
+        list_set(g, marker, sy, 0x0500, 0x2590, sx);
     }
 }
 
 /* (Session 61) UNITS (g->crowd): every unit in the view is drawn and
  * none flickers. Its sprites (the same three, front to back) go to
  * g->sprite_more, which the draw layer draws behind every other sprite
- * with no limit (video_sprites_behind), so the 80 are left to the rest --
- * the mechs, the shots, the bars, the order menu, all now in front of the
- * units -- and the multiplexer has no units to share out. */
+ * with no limit (video_sprites_behind), so the 80 were left to the rest
+ * -- the mechs, the shots, the bars, the order menu, all now in front of
+ * the units -- and the multiplexer had no units to share out. (Session
+ * 81: every sprite is drawn now; the crowd stays behind the rest.) */
 static void more_add(HzGame *g, u16 y, u16 size_link, u16 attr, u16 x)
 {
     HzSpriteMore *l = &g->sprite_more;
@@ -573,7 +571,7 @@ static void draw_order_menu(HzGame *g, const HzMech *m, const HzSprite *radar,
     }
     for (int i = 0; i < HZ_RADAR_SPRITES; i++) {
         if (radar[i].y != 0) {
-            g->sprite_list[g->sprite_count++] = radar[i];
+            g->sprite_list[g->sprite_count++] = sprite_from_ram(&radar[i]);
         }
     }
 }
@@ -625,15 +623,15 @@ void sprites_build(HzGame *g)
     draw_mech_robot(g, m2, m1, &g->sprite_fixed[7], &g->camera[0],
                     split_dx, 0);
 
-    /* The links of fixed sprites 5-9, by P2's form (.link_order). The
-     * word sprite 5 gets back after the HUD strip is v_sprite5_link_next,
-     * which VDP_UploadSprites hands to HBlank. */
+    /* The order of fixed sprites 6-9, by P2's form (.link_order: the
+     * links of sprites 5-9 on the cartridge, 5's leading to the first and
+     * the last's to the list): robot 6, 7, 8, 9; jet 7, 6, 9, 8. */
     const u8 *links = m2->form == HZ_FORM_ROBOT ? SPRITE_LINKS_P2_ROBOT
                                                 : SPRITE_LINKS_P2_JET;
-    g->sprite5_link_next = (u16)(0x0F00 | links[0]);
-    for (int i = 0; i < 5; i++) {
-        HzSprite *s = &g->sprite_fixed[5 + i];
-        s->size_link = (u16)((s->size_link & 0xFF00) | links[i]);
+    u8 at = links[0];
+    for (int i = 0; i < 4; i++) {
+        g->sprite_order[i] = at;
+        at = links[at - 5];
     }
 
     /* The 68k's d4 b31: set, then cleared by view A's moveq if it draws,
@@ -666,46 +664,6 @@ void sprites_build(HzGame *g)
     }
 }
 
-/* Sprites_Multiplex ($5336): the VDP takes 80 sprites, 10 of them fixed,
- * so 70 list entries go up per frame. Up to $46 entries: all of them.
- * More: SpriteMuxTable (row = pages past the first, column = phase 0..$B)
- * picks window 0, 70 x n, or the last 70 entries, so every entry shows at
- * least every few frames (flicker). The window is linked $B, $C ... $4F
- * and ended. */
-void sprites_multiplex(HzGame *g)
-{
-    u16 count = g->sprite_count;
-    u16 pages = 0;
-    u16 limit = 0x47;
-    for (int i = 0; i < 3; i++) {
-        if (count < limit) {
-            break;
-        }
-        limit = (u16)(limit + 0x46);
-        pages++;
-    }
-
-    u16 pick = SPRITE_MUX_TABLE[pages][g->sprite_mux_phase] & 3;
-    u16 start = 0;
-    if (pick != 0) {
-        if (pick < pages) {
-            start = (u16)(pick * HZ_SPRITE_WINDOW);
-        } else {
-            start = (u16)(count - 0x46);
-        }
-    }
-    g->sprite_window = start;
-
-    HzSprite *w = &g->sprite_list[start];
-    for (int i = 0; i < HZ_SPRITE_WINDOW - 1; i++) {
-        w[i].size_link = (u16)((w[i].size_link & 0xFF00) | (0x0B + i));
-    }
-    w[HZ_SPRITE_WINDOW - 1].size_link &= 0xFF00;
-
-    u16 phase = (u16)(g->sprite_mux_phase + 1);
-    g->sprite_mux_phase = (phase > 0x0B) ? 0 : phase;
-}
-
 /* A sprite in the cartridge's RAM format as the draw layer's: its words'
  * 9 bits of position less the 128 of the border, its size, its cell word
  * and (session 72) its colour table. */
@@ -733,44 +691,26 @@ bool sprites_show_one(HzGame *g, const HzSprite *s)
     return video_sprite_push(g->video, &o);
 }
 
-/* VDP_UploadSprites ($53D2), after the VBlank wait with the display off:
- * the frame's sprites to the draw layer, in the order the cartridge's
- * sprite table draws them -- sprites 0-9 from v_sprite_fixed, then the
- * 70-entry window (sprites $A up), each entry naming the next by its link
- * byte. Sprite 5's link is cut in the RAM copy first when
- * v_hud_sprite_cut is set (every game: VDP_Init sets it): the sprites
- * after it, the game's, are held back until HBlank writes back the word
- * Sprites_Build left (v_sprite5_link_next, copied to v_sprite5_link)
- * after line 30. (Session 61) UNITS' units behind them. And each mech's
- * frame (16 tiles, MechFrames + frame x $200) to its tiles ($200, $210)
- * when mech_frame isn't what was sent last. */
+/* VDP_UploadSprites ($53D2), after the frame with the display off: the
+ * frame's sprites to the draw layer, front to back -- the mechs' fixed
+ * sprites in Sprites_Build's order, then every list entry; the HUD strip
+ * holds them back when v_hud_sprite_cut is set (every game: VDP_Init
+ * sets it), until the strip lets them go (hud_release, game.c). (Session
+ * 61) UNITS' units behind them. And each mech's frame (16 tiles,
+ * MechFrames + frame x $200) to its tiles ($200, $210) when mech_frame
+ * isn't what was sent last. (Session 81) On the cartridge: sprites 0-9
+ * from v_sprite_fixed (0-5 the divider, the layer's now), then the
+ * multiplexer's 70-entry window of the list, linked. */
 void sprites_upload(HzGame *g)
 {
     Video *v = g->video;
-    if (g->hud_sprite_cut) {
-        g->sprite_fixed[5].size_link &= 0xFF00;
-    }
-    g->sprite5_link = g->sprite5_link_next;
-
     video_sprites_begin(v);
-    int at = 0;
-    for (int n = 0; n < VIDEO_SPRITES; n++) {
-        const HzSprite *s = (at < HZ_SPRITE_FIXED)
-            ? &g->sprite_fixed[at]
-            : &g->sprite_list[g->sprite_window + at - HZ_SPRITE_FIXED];
-        sprites_show_one(g, s);
-        u16 link = s->size_link;
-        if (at == 5) {
-            video_sprites_game(v);
-            if (g->hud_sprite_cut) {
-                link = g->sprite5_link;     /* as HBlank puts it back */
-            }
-        }
-        link &= 0x7F;
-        if (link == 0 || link >= VIDEO_SPRITES) {
-            break;
-        }
-        at = link;
+    video_sprites_game(v);
+    for (int i = 0; i < 4; i++) {
+        sprites_show_one(g, &g->sprite_fixed[g->sprite_order[i]]);
+    }
+    for (int i = 0; i < g->sprite_count && i < HZ_SPRITE_LIST; i++) {
+        video_sprite_push(v, &g->sprite_list[i]);
     }
     video_sprites_hold(v, g->hud_sprite_cut != 0);
     video_sprites_behind(v, g->sprite_more.sprite, g->sprite_more.count);

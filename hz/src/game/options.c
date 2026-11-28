@@ -13,7 +13,7 @@
  * record, which has no battery behind it, as the game's end showed it).
  * The port has no password: CONT lists the saved games (saves.h) and
  * loads one, which sets what an accepted password set; the record is
- * saved where the game's end made the password (menu_game_end).
+ * saved where the game's end made the password (game_end.c).
  *
  * On the 68k each page is a stretch of code that branches to the next,
  * back and forth; here a page is a function returning the page that
@@ -67,11 +67,14 @@ static bool map_complete(const HzGame *g, int map)
     return true;
 }
 
-/* A wait for the frame and the pads; the new presses. */
-static u16 wait_press(HzGame *g)
-{
-    return front_wait_pad(g);
-}
+/* (Session 80, docs/hackable.md step 2) A page in the parts its frames
+ * make: what comes before a frame it starts with (page_before: the
+ * menu's, and M_ClearPlanes' on the setup and the map select); the page
+ * up to its first wait for the pads (page_X: the next page, or PAGE_WAIT,
+ * the presses); a press after each frame (X_press: the next page, or
+ * PAGE_WAIT for another). Each wait is M_WaitFramePad's: the frame, then
+ * the pads. */
+#define PAGE_WAIT ((Page)(PAGE_DONE + 1))
 
 /* -- the panel and the menu ---------------------------------------------- */
 
@@ -105,7 +108,7 @@ static void draw_panel(HzGame *g)
  * byte and the difficulty to their ranges; the heading and the panel.
  * (The 68k also masks the password's letters to 0-15: no password
  * here.) */
-static Page page_setup(HzGame *g)
+static void setup_before(HzGame *g)
 {
     HzFront *f = &g->front;
     const HzMenuAssets *m = &g->assets->menu;
@@ -119,7 +122,13 @@ static Page page_setup(HzGame *g)
         f->palette[i] = m->menu_palette[i];
     }
     front_upload_palette(g);
-    front_clear_planes(g);
+}
+
+/* The rest, after M_ClearPlanes' frame (the display off: none). */
+static Page page_setup(HzGame *g)
+{
+    HzFront *f = &g->front;
+    front_clear_planes_after(g);
     f->menu_item = 0;
     f->menu_item_shown = 0;
     f->song = 0;
@@ -151,12 +160,11 @@ static void print_menu_item(HzGame *g, int n)
     front_print_at(g, 3, 5 + 2 * n, MENU_ITEMS[n]);
 }
 
-/* Options_MainMenu ($54B78): rows 3-17 cleared to the background, the
- * menu's box, its cursor. */
+/* Options_MainMenu ($54B78): after a frame, rows 3-17 cleared to the
+ * background, the menu's box, its cursor. */
 static Page page_menu(HzGame *g)
 {
     HzFront *f = &g->front;
-    front_frame(g);
     front_fill(g, LAYER_W, 3, 15, 0x0030);
     front_text_palette(g, 0);
     front_text_font(g, FONT_PLAIN);
@@ -165,48 +173,50 @@ static Page page_menu(HzGame *g)
         print_menu_item(g, n);
     }
     highlight(g, &f->menu_item_shown, f->menu_item, print_menu_item);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & HZ_PAD_DOWN) {
-            if (++f->menu_item > 4) {
-                f->menu_item = 0;
-            }
-            highlight(g, &f->menu_item_shown, f->menu_item, print_menu_item);
-            continue;
+    return PAGE_WAIT;
+}
+
+static Page menu_press(HzGame *g, u16 p)
+{
+    HzFront *f = &g->front;
+    if (p & HZ_PAD_DOWN) {
+        if (++f->menu_item > 4) {
+            f->menu_item = 0;
         }
-        if (p & HZ_PAD_UP) {
-            if (--f->menu_item < 0) {
-                f->menu_item = 4;
-            }
-            highlight(g, &f->menu_item_shown, f->menu_item, print_menu_item);
-            continue;
-        }
-        if (!(p & (HZ_PAD_B | CHOOSE))) {
-            continue;
-        }
-        switch (f->menu_item) {
-        case 0:
-            /* START: a fresh record, from the first map (and a new saved
-             * game, once there is a win to save) */
-            g->options[3] = 0;
-            for (int t = 0; t < 4; t++) {
-                g->win_record[t] = 0;
-            }
-            g->save_slot = -1;
-            return PAGE_MAP_SELECT;
-        case 1:
-            return PAGE_SAVES;
-        case 2:
-            return PAGE_P1;
-        case 3:
-            return PAGE_MUSIC;
-        case 4:
-            return PAGE_SOUND;
-        default:
-            break;
-        }
+        highlight(g, &f->menu_item_shown, f->menu_item, print_menu_item);
+        return PAGE_WAIT;
     }
-    return PAGE_DONE;
+    if (p & HZ_PAD_UP) {
+        if (--f->menu_item < 0) {
+            f->menu_item = 4;
+        }
+        highlight(g, &f->menu_item_shown, f->menu_item, print_menu_item);
+        return PAGE_WAIT;
+    }
+    if (!(p & (HZ_PAD_B | CHOOSE))) {
+        return PAGE_WAIT;
+    }
+    switch (f->menu_item) {
+    case 0:
+        /* START: a fresh record, from the first map (and a new saved
+         * game, once there is a win to save) */
+        g->options[3] = 0;
+        for (int t = 0; t < 4; t++) {
+            g->win_record[t] = 0;
+        }
+        g->save_slot = -1;
+        return PAGE_MAP_SELECT;
+    case 1:
+        return PAGE_SAVES;
+    case 2:
+        return PAGE_P1;
+    case 3:
+        return PAGE_MUSIC;
+    case 4:
+        return PAGE_SOUND;
+    default:
+        return PAGE_WAIT;
+    }
 }
 
 /* -- PLAYER ------------------------------------------------------------------ */
@@ -230,32 +240,54 @@ static void print_window_choice(HzGame *g, int n)
 
 /* The two-way choice the PLAYER pages share: up and down toggle, B goes
  * back, A or C stores the choice in v_options' `bit`, redraws the panel
- * and goes on. */
-static Page choose_side(HzGame *g, void (*print)(HzGame *g, int n),
-                        u8 bit, Page back, Page next)
+ * and goes on. Each page's print, bit, page back and page next. */
+typedef struct {
+    void (*print)(HzGame *g, int n);
+    u8   bit;
+    Page back;
+    Page next;
+} Side;
+
+static const Side SIDES[3] = {
+    { print_p1_choice, 0x02, PAGE_MENU, PAGE_P2 },          /* PAGE_P1 */
+    { print_p2_choice, 0x01, PAGE_P1, PAGE_WINDOW },        /* PAGE_P2 */
+    { print_window_choice, 0x04, PAGE_P2, PAGE_MENU },      /* PAGE_WINDOW */
+};
+
+static const Side *side_of(Page page)
+{
+    return &SIDES[page - PAGE_P1];
+}
+
+static Page choose_side(HzGame *g, Page page)
 {
     HzFront *f = &g->front;
-    f->choice = (g->options[0] & bit) ? 1 : 0;
+    const Side *s = side_of(page);
+    f->choice = (g->options[0] & s->bit) ? 1 : 0;
     f->choice_shown = 0;
-    highlight(g, &f->choice_shown, f->choice, print);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & (HZ_PAD_UP | HZ_PAD_DOWN)) {
-            f->choice = (s16)((f->choice + 1) & 1);
-            highlight(g, &f->choice_shown, f->choice, print);
-            continue;
-        }
-        if (p & HZ_PAD_B) {
-            return back;
-        }
-        if (p & CHOOSE) {
-            g->options[0] = (u8)((g->options[0] & ~bit)
-                                 | (f->choice ? bit : 0));
-            draw_panel(g);
-            return next;
-        }
+    highlight(g, &f->choice_shown, f->choice, s->print);
+    return PAGE_WAIT;
+}
+
+static Page choose_side_press(HzGame *g, Page page, u16 p)
+{
+    HzFront *f = &g->front;
+    const Side *s = side_of(page);
+    if (p & (HZ_PAD_UP | HZ_PAD_DOWN)) {
+        f->choice = (s16)((f->choice + 1) & 1);
+        highlight(g, &f->choice_shown, f->choice, s->print);
+        return PAGE_WAIT;
     }
-    return PAGE_DONE;
+    if (p & HZ_PAD_B) {
+        return s->back;
+    }
+    if (p & CHOOSE) {
+        g->options[0] = (u8)((g->options[0] & ~s->bit)
+                             | (f->choice ? s->bit : 0));
+        draw_panel(g);
+        return s->next;
+    }
+    return PAGE_WAIT;
 }
 
 /* Options_P1Side ($54D9C): the 1 PLAYER box, v_options b1. */
@@ -269,7 +301,7 @@ static Page page_p1(HzGame *g)
     front_text_palette(g, 1);
     front_print_at(g, 14, 5, "1 PLAYER");
     front_text_palette(g, 0);
-    return choose_side(g, print_p1_choice, 0x02, PAGE_MENU, PAGE_P2);
+    return choose_side(g, PAGE_P1);
 }
 
 /* Options_P2Side ($54F48): the 2 PLAYER box, v_options b0. */
@@ -283,7 +315,7 @@ static Page page_p2(HzGame *g)
     front_text_palette(g, 1);
     front_print_at(g, 17, 8, "2 PLAYER");
     front_text_palette(g, 0);
-    return choose_side(g, print_p2_choice, 0x01, PAGE_P1, PAGE_WINDOW);
+    return choose_side(g, PAGE_P2);
 }
 
 /* Options_CheckWindow ($550F0): two players or two computers play split
@@ -305,7 +337,7 @@ static Page page_window(HzGame *g)
     front_text_palette(g, 1);
     front_print_at(g, 16, 11, "WINDOW");
     front_text_palette(g, 0);
-    return choose_side(g, print_window_choice, 0x04, PAGE_P2, PAGE_MENU);
+    return choose_side(g, PAGE_WINDOW);
 }
 
 /* -- CONT: the saved games (the port's; see the top) -------------------- */
@@ -385,27 +417,30 @@ static Page page_saves(HzGame *g)
     f->save_shown = f->save_cursor;
     draw_saves(g);
     highlight(g, &f->save_shown, f->save_cursor, print_save);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & (HZ_PAD_DOWN | HZ_PAD_UP)) {
-            int dir = (p & HZ_PAD_DOWN) ? 1 : HZ_SAVE_SLOTS - 1;
-            f->save_cursor = (s16)((f->save_cursor + dir) % HZ_SAVE_SLOTS);
-            highlight(g, &f->save_shown, f->save_cursor, print_save);
-            continue;
-        }
-        if (p & HZ_PAD_B) {
-            return PAGE_MENU;
-        }
-        if (p & CHOOSE) {
-            const HzSaveSlot *slot = &g_saves.slot[f->save_cursor];
-            if (slot->used && saves_next_map(slot->record) < 8) {
-                options_load_save(g, slot, f->save_cursor);
-                draw_panel(g);
-                return PAGE_MAP_SELECT;
-            }
+    return PAGE_WAIT;
+}
+
+static Page saves_press(HzGame *g, u16 p)
+{
+    HzFront *f = &g->front;
+    if (p & (HZ_PAD_DOWN | HZ_PAD_UP)) {
+        int dir = (p & HZ_PAD_DOWN) ? 1 : HZ_SAVE_SLOTS - 1;
+        f->save_cursor = (s16)((f->save_cursor + dir) % HZ_SAVE_SLOTS);
+        highlight(g, &f->save_shown, f->save_cursor, print_save);
+        return PAGE_WAIT;
+    }
+    if (p & HZ_PAD_B) {
+        return PAGE_MENU;
+    }
+    if (p & CHOOSE) {
+        const HzSaveSlot *slot = &g_saves.slot[f->save_cursor];
+        if (slot->used && saves_next_map(slot->record) < 8) {
+            options_load_save(g, slot, f->save_cursor);
+            draw_panel(g);
+            return PAGE_MAP_SELECT;
         }
     }
-    return PAGE_DONE;
+    return PAGE_WAIT;
 }
 
 /* -- MUSIC and SOUND ----------------------------------------------------------- */
@@ -433,39 +468,41 @@ static void options_song(HzGame *g)
  * repeating as MusicTestRepeat says. */
 static Page page_music(HzGame *g)
 {
-    HzFront *f = &g->front;
     snd_fade_music(g, 2);
     front_text_palette(g, 0);
     front_text_font(g, FONT_PLAIN);
     front_box(g, 12, 3, 21, 4);
     print_song_title(g);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & HZ_PAD_DOWN) {
-            if (++f->song > HZ_SONGS - 1) {
-                f->song = 0;
-            }
-            print_song_title(g);
-            continue;
+    return PAGE_WAIT;
+}
+
+static Page music_press(HzGame *g, u16 p)
+{
+    HzFront *f = &g->front;
+    if (p & HZ_PAD_DOWN) {
+        if (++f->song > HZ_SONGS - 1) {
+            f->song = 0;
         }
-        if (p & HZ_PAD_UP) {
-            if (--f->song < 0) {
-                f->song = HZ_SONGS - 1;
-            }
-            print_song_title(g);
-            continue;
-        }
-        if (p & HZ_PAD_B) {
-            options_song(g);
-            return PAGE_MENU;
-        }
-        if (p & CHOOSE) {
-            snd_play_music(g, (u16)f->song);
-            snd_start_song(g, g->assets->menu.song_repeat[f->song] ? 0xFF
-                                                                   : 0x00);
-        }
+        print_song_title(g);
+        return PAGE_WAIT;
     }
-    return PAGE_DONE;
+    if (p & HZ_PAD_UP) {
+        if (--f->song < 0) {
+            f->song = HZ_SONGS - 1;
+        }
+        print_song_title(g);
+        return PAGE_WAIT;
+    }
+    if (p & HZ_PAD_B) {
+        options_song(g);
+        return PAGE_MENU;
+    }
+    if (p & CHOOSE) {
+        snd_play_music(g, (u16)f->song);
+        snd_start_song(g, g->assets->menu.song_repeat[f->song] ? 0xFF
+                                                               : 0x00);
+    }
+    return PAGE_WAIT;
 }
 
 /* SoundTest_PrintNumber ($55C8E) */
@@ -479,39 +516,41 @@ static void print_sfx_number(HzGame *g)
 /* SoundTest_Run ($55B9A): the effects by number; A or C plays one. */
 static Page page_sound(HzGame *g)
 {
-    HzFront *f = &g->front;
-    int count = g->assets->menu.sfx_count;
     snd_fade_music(g, 2);
     front_text_palette(g, 0);
     front_text_font(g, FONT_PLAIN);
     front_box(g, 12, 3, 10, 3);
     front_print_at(g, 14, 5, "SOUND");
     print_sfx_number(g);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & HZ_PAD_DOWN) {
-            if (++f->sfx > count - 1) {
-                f->sfx = 0;
-            }
-            print_sfx_number(g);
-            continue;
+    return PAGE_WAIT;
+}
+
+static Page sound_press(HzGame *g, u16 p)
+{
+    HzFront *f = &g->front;
+    int count = g->assets->menu.sfx_count;
+    if (p & HZ_PAD_DOWN) {
+        if (++f->sfx > count - 1) {
+            f->sfx = 0;
         }
-        if (p & HZ_PAD_UP) {
-            if (--f->sfx < 0) {
-                f->sfx = (s16)(count - 1);
-            }
-            print_sfx_number(g);
-            continue;
-        }
-        if (p & HZ_PAD_B) {
-            options_song(g);
-            return PAGE_MENU;
-        }
-        if (p & CHOOSE) {
-            front_play_sfx(g, (u8)f->sfx);
-        }
+        print_sfx_number(g);
+        return PAGE_WAIT;
     }
-    return PAGE_DONE;
+    if (p & HZ_PAD_UP) {
+        if (--f->sfx < 0) {
+            f->sfx = (s16)(count - 1);
+        }
+        print_sfx_number(g);
+        return PAGE_WAIT;
+    }
+    if (p & HZ_PAD_B) {
+        options_song(g);
+        return PAGE_MENU;
+    }
+    if (p & CHOOSE) {
+        front_play_sfx(g, (u8)f->sfx);
+    }
+    return PAGE_WAIT;
 }
 
 /* -- the map select and the difficulty ------------------------------------- */
@@ -589,14 +628,19 @@ static void step_map(HzGame *g, int dir)
     }
 }
 
-/* MapSelect_Run ($55CB2): the map select's song, the planes cleared, the
- * cursor on v_option_map. */
+/* MapSelect_Run ($55CB2): the map select's song (page_before, before
+ * M_ClearPlanes' frame), the planes cleared, the cursor on
+ * v_option_map. */
+static void map_select_before(HzGame *g)
+{
+    snd_play_music(g, 2);
+    snd_start_song(g, 0xFF);
+}
+
 static Page page_map_select(HzGame *g)
 {
     HzFront *f = &g->front;
-    snd_play_music(g, 2);
-    snd_start_song(g, 0xFF);
-    front_clear_planes(g);
+    front_clear_planes_after(g);
     f->map = g->options[3];
     f->map_shown = g->options[3];
     return PAGE_MAP;
@@ -608,33 +652,35 @@ static Page page_map_select(HzGame *g)
  * one computer side, else the game. */
 static Page page_map(HzGame *g)
 {
-    HzFront *f = &g->front;
     front_text_palette(g, 0);
     front_text_font(g, FONT_PLAIN);
     front_box(g, 1, 2, one_cpu(g) ? 15 : 9, 17);
     draw_map_names(g);
     map_highlight(g);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & HZ_PAD_DOWN) {
-            step_map(g, 1);
-            map_highlight(g);
-            continue;
-        }
-        if (p & HZ_PAD_UP) {
-            step_map(g, -1);
-            map_highlight(g);
-            continue;
-        }
-        if (p & HZ_PAD_B) {
-            return PAGE_SETUP;
-        }
-        if (p & CHOOSE) {
-            g->options[3] = (u8)f->map;
-            return one_cpu(g) ? PAGE_TYPE : PAGE_DONE;
-        }
+    return PAGE_WAIT;
+}
+
+static Page map_press(HzGame *g, u16 p)
+{
+    HzFront *f = &g->front;
+    if (p & HZ_PAD_DOWN) {
+        step_map(g, 1);
+        map_highlight(g);
+        return PAGE_WAIT;
     }
-    return PAGE_DONE;
+    if (p & HZ_PAD_UP) {
+        step_map(g, -1);
+        map_highlight(g);
+        return PAGE_WAIT;
+    }
+    if (p & HZ_PAD_B) {
+        return PAGE_SETUP;
+    }
+    if (p & CHOOSE) {
+        g->options[3] = (u8)f->map;
+        return one_cpu(g) ? PAGE_TYPE : PAGE_DONE;
+    }
+    return PAGE_WAIT;
 }
 
 /* TypeSelect_PrintEntry ($563AA) */
@@ -689,78 +735,159 @@ static Page page_type(HzGame *g)
     f->type = (s16)first;
     f->type_shown = (s16)first;
     highlight(g, &f->type_shown, f->type, print_type);
-    while (!g->quit) {
-        u16 p = wait_press(g);
-        if (p & HZ_PAD_DOWN) {
-            step_type(g, 1);
-            highlight(g, &f->type_shown, f->type, print_type);
-            continue;
-        }
-        if (p & HZ_PAD_UP) {
-            step_type(g, -1);
-            highlight(g, &f->type_shown, f->type, print_type);
-            continue;
-        }
-        if (p & HZ_PAD_B) {
-            return PAGE_MAP;
-        }
-        if (p & CHOOSE) {
-            g->options[1] = (u8)f->type;
-            draw_panel(g);
-            g->options[2] = OPTION2_BY_TYPE[f->type];
-            return PAGE_DONE;
-        }
-    }
-    return PAGE_DONE;
+    return PAGE_WAIT;
 }
 
-/* Options_Run's whole flow, page by page, until the game. */
-void options_run(HzGame *g)
+static Page type_press(HzGame *g, u16 p)
 {
-    Page page = PAGE_SETUP;
-    while (page != PAGE_DONE && !g->quit) {
-        if (g->front_probe != NULL) {
-            g->front_probe(g, page, g->front_probe_user);
-            if (g->quit) {
-                break;
+    HzFront *f = &g->front;
+    if (p & HZ_PAD_DOWN) {
+        step_type(g, 1);
+        highlight(g, &f->type_shown, f->type, print_type);
+        return PAGE_WAIT;
+    }
+    if (p & HZ_PAD_UP) {
+        step_type(g, -1);
+        highlight(g, &f->type_shown, f->type, print_type);
+        return PAGE_WAIT;
+    }
+    if (p & HZ_PAD_B) {
+        return PAGE_MAP;
+    }
+    if (p & CHOOSE) {
+        g->options[1] = (u8)f->type;
+        draw_panel(g);
+        g->options[2] = OPTION2_BY_TYPE[f->type];
+        return PAGE_DONE;
+    }
+    return PAGE_WAIT;
+}
+
+/* -- the pages' run -------------------------------------------------------- */
+
+/* Whether the page starts with a frame, and what comes before it. */
+static bool page_before(HzGame *g, Page page)
+{
+    switch (page) {
+    case PAGE_SETUP:
+        setup_before(g);
+        return true;
+    case PAGE_MENU:
+        return true;
+    case PAGE_MAP_SELECT:
+        map_select_before(g);
+        return true;
+    default:
+        return false;
+    }
+}
+
+static Page page_enter(HzGame *g, Page page)
+{
+    switch (page) {
+    case PAGE_SETUP:
+        return page_setup(g);
+    case PAGE_MENU:
+        return page_menu(g);
+    case PAGE_P1:
+        return page_p1(g);
+    case PAGE_P2:
+        return page_p2(g);
+    case PAGE_WINDOW:
+        return page_window(g);
+    case PAGE_SAVES:
+        return page_saves(g);
+    case PAGE_MUSIC:
+        return page_music(g);
+    case PAGE_SOUND:
+        return page_sound(g);
+    case PAGE_MAP_SELECT:
+        return page_map_select(g);
+    case PAGE_MAP:
+        return page_map(g);
+    case PAGE_TYPE:
+        return page_type(g);
+    default:
+        return PAGE_DONE;
+    }
+}
+
+static Page page_press(HzGame *g, Page page, u16 p)
+{
+    switch (page) {
+    case PAGE_MENU:
+        return menu_press(g, p);
+    case PAGE_P1:
+    case PAGE_P2:
+    case PAGE_WINDOW:
+        return choose_side_press(g, page, p);
+    case PAGE_SAVES:
+        return saves_press(g, p);
+    case PAGE_MUSIC:
+        return music_press(g, p);
+    case PAGE_SOUND:
+        return sound_press(g, p);
+    case PAGE_MAP:
+        return map_press(g, p);
+    case PAGE_TYPE:
+        return type_press(g, p);
+    default:
+        return PAGE_DONE;
+    }
+}
+
+/* Options_Run's whole flow, page by page, until the game: before each
+ * page the test seam (front_probe). (Session 80) Its phases: a page's
+ * start, its part after the frame it starts with, a press. A quit ends
+ * it at a page's start or at a wait for the pads. */
+enum {
+    OPT_PAGE,
+    OPT_ENTER,
+    OPT_PRESS
+};
+
+void options_run_begin(HzGame *g)
+{
+    g->front_run.page = PAGE_SETUP;
+    g->front_run.page_phase = OPT_PAGE;
+}
+
+HzRun options_run_step(HzGame *g)
+{
+    HzFrontRun *r = &g->front_run;
+    for (;;) {
+        Page page = (Page)r->page;
+        Page next;
+        if (r->page_phase == OPT_PAGE) {
+            if (page == PAGE_DONE || g->quit) {
+                return HZ_RUN_DONE;
             }
+            if (g->front_probe != NULL) {
+                g->front_probe(g, page, g->front_probe_user);
+                if (g->quit) {
+                    return HZ_RUN_DONE;
+                }
+            }
+            if (page_before(g, page)) {
+                r->page_phase = OPT_ENTER;
+                return HZ_RUN_FRAME;
+            }
+            next = page_enter(g, page);
+        } else if (r->page_phase == OPT_ENTER) {
+            next = page_enter(g, page);
+        } else {
+            next = page_press(g, page, front_read_pads(g));
         }
-        switch (page) {
-        case PAGE_SETUP:
-            page = page_setup(g);
-            break;
-        case PAGE_MENU:
-            page = page_menu(g);
-            break;
-        case PAGE_P1:
-            page = page_p1(g);
-            break;
-        case PAGE_P2:
-            page = page_p2(g);
-            break;
-        case PAGE_WINDOW:
-            page = page_window(g);
-            break;
-        case PAGE_SAVES:
-            page = page_saves(g);
-            break;
-        case PAGE_MUSIC:
-            page = page_music(g);
-            break;
-        case PAGE_SOUND:
-            page = page_sound(g);
-            break;
-        case PAGE_MAP_SELECT:
-            page = page_map_select(g);
-            break;
-        case PAGE_MAP:
-            page = page_map(g);
-            break;
-        case PAGE_TYPE:
-            page = page_type(g);
-            break;
-        case PAGE_DONE:
-            break;
+        if (next != PAGE_WAIT) {
+            r->page = (u8)next;
+            r->page_phase = OPT_PAGE;
+            continue;
         }
+        if (g->quit) {
+            r->page = PAGE_DONE;
+            return HZ_RUN_DONE;
+        }
+        r->page_phase = OPT_PRESS;
+        return HZ_RUN_FRAME;
     }
 }

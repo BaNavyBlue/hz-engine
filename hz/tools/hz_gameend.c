@@ -22,6 +22,7 @@
 
 #include "video_vdp.h"
 #include "../src/game/front.h"
+#include "../src/game/tick.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,8 +129,6 @@ int main(int argc, char **argv)
     vdp_reset(&vdp);
     video_vdp_watch(&g_cart, &video, &vdp);
     game_init(g, &assets, &video);
-    g->frame = on_frame;
-    g->frame_user = r;
     g->snd_post = on_sound;
     g->snd_user = r;
 
@@ -178,7 +177,7 @@ int main(int argc, char **argv)
         g->quit = true;
     }
 
-    menu_game_end(g);
+    tick_game_end(g, on_frame, r);
     if (!g->quit) {
         fprintf(r->out, "E");
         for (int i = 0; i < 4; i++) {

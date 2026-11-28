@@ -41,14 +41,14 @@ def seed_list(text):
     return seeds
 
 
-def run_one(binary, assets, outdir, seed, frames, seen=False):
+def run_one(binary, assets, outdir, seed, frames, mode=None):
     saves = os.path.join(outdir, 'saves', 's%d' % seed)
     shutil.rmtree(saves, ignore_errors=True)
     os.makedirs(saves)
     env = dict(os.environ, HZ_SAVES=saves)
     p = subprocess.run([binary, assets, str(seed), str(frames),
                         os.path.join(outdir, 's%d.txt' % seed)]
-                       + (['--seen'] if seen else []),
+                       + ([mode] if mode else []),
                        env=env, capture_output=True, text=True)
     return seed, p.returncode, p.stdout.strip(), p.stderr.strip()
 
@@ -99,8 +99,9 @@ def cmd_run(a):
     binary = os.path.abspath(a.binary)
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as pool:
+        mode = '--asked' if a.asked else '--seen' if a.seen else None
         jobs = [pool.submit(run_one, binary, a.assets, a.outdir, n, a.frames,
-                            a.seen)
+                            mode)
                 for n in seeds]
         with open(os.path.join(a.outdir, 'summary.txt'), 'w') as summary:
             for job in jobs:
@@ -166,6 +167,10 @@ def main():
     r.add_argument('--seen', action='store_true',
                    help='(session 79) hash the state, the screen and the '
                    'sound only (hz_netcheck --seen)')
+    r.add_argument('--asked', action='store_true',
+                   help='(session 81) hash the state, the layer but its '
+                   'sprites, the sprites the game asked for and the sound '
+                   '(hz_netcheck --asked)')
     c = sub.add_parser('compare')
     c.add_argument('ref')
     c.add_argument('other', nargs='+')

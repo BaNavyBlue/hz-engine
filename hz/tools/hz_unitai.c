@@ -25,6 +25,7 @@
 
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 
 #include <stdio.h>
@@ -440,14 +441,13 @@ static int run_game(const HzAssets *assets, int map, int mode, int difficulty,
     video_init(&video);
     game_init(&game, assets, &video);
     HzGame *g = &game;
-    g->frame = frame_hook;
     g->options[0] = (u8)mode;
     g->options[1] = (u8)difficulty;
     g->options[3] = (u8)map;
-    if (!game_new(g)) {
+    if (!tick_new(g, frame_hook, NULL)) {
         return 1;
     }
-    game_start(g);
+    tick_start(g, frame_hook, NULL);
     g->unit_ai_probe = dump_probe;
     g->unit_ai_probe_user = &d;
     for (int f = 0; f < frames; f++) {
@@ -467,7 +467,7 @@ static int run_game(const HzAssets *assets, int map, int mode, int difficulty,
                 m->y = (s16)(rom_unit(g, pick)->y + rng_below(0x70) - 0x38);
             }
         }
-        if (game_frame(g, true) != HZ_LOOP_ON) {
+        if (tick_pass(g, true, frame_hook, NULL) != HZ_LOOP_ON) {
             break;
         }
     }

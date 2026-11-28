@@ -89,7 +89,7 @@ standing:
   the nightmare AI's way through it both take it.
 - **The records** (`unit_stats_for`): types 6 and 7 take turrets.json's
   while `turrets_on`: the patch on, or on at any time in this game
-  (`HzGame.turrets`, set at `game_start` and each `game_frame`).
+  (`HzGame.turrets`, set at Game_Start and each pass of the frame loop).
   Switching it off mid-game stops the shop selling them; the ones bought
   fight on, and the next game is the original's.
 - **Off, the original's play exactly**: the order menu, unit AI, attract

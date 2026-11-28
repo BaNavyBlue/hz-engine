@@ -132,7 +132,7 @@ frames):
 2. With an alarm, or a man short: the men are called in (`recall`); it
    waits for them, then drives home (`truck_go_home`): the nearest of its
    side's outposts and its HQ by the ground (`paths_cost`), down
-   `paths.c`'s field for it whether or not PATHS is on (`game_start` makes
+   `paths.c`'s field for it whether or not PATHS is on (Game_Start makes
    the truck's fields with REPAIR, 17 or so, as PATHS makes the others');
    with no way by the ground, straight at it. Home, it stops, and takes
    on a man in two thinks.

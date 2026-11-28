@@ -60,6 +60,7 @@
 #include "../src/game/nightmare.h"
 #include "../src/game/replay.h"
 #include "../src/game/statehash.h"
+#include "../src/game/tick.h"
 #include "../src/net/net_client.h"
 
 #include <signal.h>
@@ -104,6 +105,7 @@ typedef struct {
     u64       game_id;
     HzReplay  replay;
     bool      recording;
+    bool      over;         /* (session 81) this game ended with an HQ */
 } Bot;
 
 static volatile sig_atomic_t g_stop = 0;
@@ -260,6 +262,46 @@ static bool music_on(void *user)
     return true;
 }
 
+/* (Session 81) What MainLoop_Title tells: the game set up (its replay
+ * begun), a pass over (the AI thinks, session 64: between frames), the
+ * game's end (its replay saved; who won, to the log). */
+static void on_event(HzGame *g, void *user)
+{
+    Bot *b = user;
+    NetClient *c = &b->net;
+    switch ((HzEvent)g->event) {
+        case HZ_EVENT_GAME: {
+            b->recording = false;
+            if (b->replays != NULL) {
+                replay_begin(&b->replay, g, b->game_id, NET_GAME_CODE,
+                             "netai", c->side, c->rival);
+                b->recording = true;
+            }
+            break;
+        }
+        case HZ_EVENT_PASS: {
+            think(b, g);
+            break;
+        }
+        case HZ_EVENT_ENDED: {
+            bool over = g->frame_exit == HZ_LOOP_GAME_OVER;
+            save_replay(b, g, over);
+            if (over) {
+                b->over = true;
+                if (b->log != NULL) {
+                    fprintf(b->log, "R %u %s\n", (unsigned)c->frame,
+                            g->winner == HZ_DRAW ? "DRAW"
+                            : g->winner != 0 ? "P2" : "P1");
+                }
+            }
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
 /* One game, from its START: main.c's run_net_game. It starts with a
  * frame's delay, and takes what the person's leaves (net_game_push,
  * session 64); it thinks ahead by it (think). Before session 64 it kept
@@ -270,8 +312,6 @@ static void play(Bot *b, HzGame *g, Video *video, const HzAssets *assets)
     NetClient *c = &b->net;
     video_init(video);
     game_init(g, assets, video);
-    g->frame = on_frame;
-    g->frame_user = b;
     g->snd_music_on = music_on;
     g->hw_version = 0xA0;
     g->options[0] = 5;
@@ -290,33 +330,11 @@ static void play(Bot *b, HzGame *g, Video *video, const HzAssets *assets)
     b->too_long = false;
     b->began = net_now_ms();
     net_game_begin(c, 1);       /* then what the person's leaves */
-    game_title_prepare(g);
-    g->game_type = 0;
-    bool over = false;
-    if (game_setup_after_title(g) == HZ_SETUP_GAME && !g->quit) {
-        b->recording = false;
-        if (b->replays != NULL) {
-            replay_begin(&b->replay, g, b->game_id, NET_GAME_CODE, "netai",
-                         c->side, c->rival);
-            b->recording = true;
-        }
-        game_start(g);
-        HzLoopExit exit = game_frame(g, false);
-        while (exit == HZ_LOOP_ON) {
-            think(b, g);        /* (session 64) between frames */
-            exit = game_frame(g, true);
-        }
-        save_replay(b, g, exit == HZ_LOOP_GAME_OVER);
-        if (exit == HZ_LOOP_GAME_OVER) {
-            over = true;
-            if (b->log != NULL) {
-                fprintf(b->log, "R %u %s\n", (unsigned)c->frame,
-                        g->winner == HZ_DRAW ? "DRAW"
-                        : g->winner != 0 ? "P2" : "P1");
-            }
-            game_over(g);
-        }
-    }
+    b->over = false;
+    /* MainLoop_Title once round, no title: the setup, the game, its end
+     * (on_event) */
+    tick_main(g, HZ_MAIN_NO_TITLE | HZ_MAIN_ONCE, on_frame, on_event, b);
+    bool over = b->over;
     if (b->log != NULL) {
         fprintf(b->log, "E %u %s\n", (unsigned)c->frame,
                 b->why != NETG_ON ? net_game_stop_text(b->why) : "-");

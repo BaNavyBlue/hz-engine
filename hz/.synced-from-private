@@ -1,2 +1,2 @@
-hz/ is the private port's, as of: Step 1 of the hackable plan: the game draws through its own draw layer (src/core/video.h), not a VDP model
+hz/ is the private port's, as of: Step 2 of the hackable plan: the frame model; step 1's rest (every sprite drawn, NET_GAME_CODE 14); the nightmare AI keeps off a ring of launchers
 Made by tools/sync_private.py; it empties this folder each time.

@@ -36,6 +36,7 @@
 #include "../src/core/video.h"
 #include "../src/core/pngwrite.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -231,8 +232,6 @@ static bool start(Run *r, HzGame *g, Video *video, const HzAssets *as, int map,
     r->fly = r->fly_always;
     memset(&r->pad, 0, sizeof r->pad);
     r->shot = NULL;
-    g->frame = on_frame;
-    g->frame_user = r;
     g->snd_music_on = music_on;
     g->fixes = fixes;
     g->hw_version = 0xA0;
@@ -241,12 +240,12 @@ static bool start(Run *r, HzGame *g, Video *video, const HzAssets *as, int map,
     g->options[1] = 0;
     g->options[2] = 0xFF;
     g->options[3] = (u8)map;
-    if (!game_new(g)) {
+    if (!tick_new(g, on_frame, r)) {
         fprintf(stderr, "hz_repair: map %d doesn't load\n", map);
         return false;
     }
     g->rng_seed_saved = 1;
-    game_start(g);
+    tick_start(g, on_frame, r);
     if (!find_ground(r, 420, 240)) {
         fprintf(stderr, "hz_repair: map %d has no 420 x 240 px of flat "
                 "ground\n", map);
@@ -258,13 +257,13 @@ static bool start(Run *r, HzGame *g, Video *video, const HzAssets *as, int map,
                 g->posts[HZ_POST_HQ].x - r->ox,
                 g->posts[HZ_POST_HQ].y - r->oy);
     }
-    return game_frame(g, false) == HZ_LOOP_ON;
+    return tick_pass(g, false, on_frame, r) == HZ_LOOP_ON;
 }
 
 static bool frames(Run *r, int n)
 {
     for (int i = 0; i < n; i++) {
-        if (game_frame(r->g, true) != HZ_LOOP_ON) {
+        if (tick_pass(r->g, true, on_frame, r) != HZ_LOOP_ON) {
             return false;
         }
     }

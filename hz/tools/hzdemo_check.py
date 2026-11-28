@@ -175,6 +175,17 @@ class Vdp:
         self.fill = False
         self.read16 = read16
         self.held = hzlayer.Held()
+        # (Session 81) The game's whole sprite list, read as
+        # VDP_UploadSprites' DMA took its window from it; None once
+        # anything else writes the window's sprites (hzlayer.sprites).
+        self.list_at = self.count_at = None
+        self.listed = None
+        self.listing = False
+
+    def wrote(self, a):
+        self.held.wrote(a)
+        if not self.listing and 0xD050 <= a < 0xD280:
+            self.listed = None
 
     def store(self, w):
         a = self.addr
@@ -191,8 +202,8 @@ class Vdp:
             a &= 0xFFFE
             self.vram[a] = w >> 8
             self.vram[a + 1] = w & 0xFF
-            self.held.wrote(a)
-            self.held.wrote(a + 1)
+            self.wrote(a)
+            self.wrote(a + 1)
         self.addr = (self.addr + self.regs[15]) & 0xFFFF
 
     def control(self, w):
@@ -222,14 +233,25 @@ class Vdp:
             src = r[21] | (r[22] << 8)
             for _ in range(n or 0x10000):
                 self.vram[self.addr] = self.vram[src]
-                self.held.wrote(self.addr)
+                self.wrote(self.addr)
                 src = (src + 1) & 0xFFFF
                 self.addr = (self.addr + r[15]) & 0xFFFF
         else:
             src = ((r[23] & 0x7F) << 17) | (r[22] << 9) | (r[21] << 1)
+            dest = self.addr
+            listing = (self.list_at is not None and dest == 0xD050
+                       and self.list_at <= (src & 0xFFFFFF)
+                       < self.list_at + 298 * 8)
+            self.listing = listing
             for _ in range(n or 0x10000):
                 self.store(self.read16(src))
                 src += 2
+            self.listing = False
+            if listing:
+                count = self.read16(self.count_at)
+                self.listed = [tuple(self.read16(self.list_at + e * 8 + k * 2)
+                                     for k in range(4))
+                               for e in range(min(count, 298))]
 
     def data(self, w):
         self.pending = None
@@ -240,7 +262,7 @@ class Vdp:
             inc = self.regs[15] or 1
             for _ in range(n + 1):
                 self.vram[a & 0xFFFF] = (w >> 8) & 0xFF
-                self.held.wrote(a & 0xFFFF)
+                self.wrote(a & 0xFFFF)
                 a += inc
             self.addr = a & 0xFFFF
             return
@@ -258,6 +280,8 @@ class Cpu(m68krun.M68k):
         super().__init__(rom)
         self.sym = sym
         self.vdp = Vdp(lambda a: (self.read(a, 2)))
+        self.vdp.list_at = sym['v_sprite_list'] & 0xFFFFFF
+        self.vdp.count_at = sym['v_sprite_count'] & 0xFFFFFF
         self.pads = pads
         self.limit = limit
         self.expect = expect
@@ -407,7 +431,7 @@ class Cpu(m68krun.M68k):
             k, v.held.crc(v.vram),
             ''.join('%03X' % (c & 0x0EEE) for c in v.cram),
             crc(vs), ''.join('%02X' % r for r in v.regs[:19]),
-            hzlayer.sprites_crc(v.vram, v.regs[5], cut))
+            hzlayer.sprites_crc(v.vram, v.regs[5], cut, v.listed))
         r = 'R %d %08X %08X %08X %08X %08X %08X' % ((k,) + self.state_crcs())
         self.frames.append((f, r))
         self.pad = self.pads[k] if k < len(self.pads) else 0

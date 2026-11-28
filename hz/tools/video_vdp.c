@@ -1,6 +1,7 @@
 #include "video_vdp.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* video_vdp.h says what this is for. The layout is half A's video.c. */
@@ -203,13 +204,52 @@ static u16 attr(const Sprite *s)
                  | (s->pal << 13) | (s->prio << 15));
 }
 
+/* (Session 81) The sprites drawn, as the cartridge's side lists them:
+ * the split game's divider as its six 4 x 4 sprites (0-5 on the
+ * cartridge, x 144, y 32 on, from line 0: before the HUD strip's cut),
+ * then the layer's list. The k'th of drawn_count's; its first line in
+ * *from. */
+static int divider_sprites(const Video *v)
+{
+    return (v->divider && v->layout == VIDEO_GAME_SPLIT) ? 6 : 0;
+}
+
+static int drawn_count(const Video *v)
+{
+    return divider_sprites(v) + v->sprite_count;
+}
+
+static Sprite drawn_at(const Video *v, int k, int *from)
+{
+    int d = divider_sprites(v);
+    if (k < d) {
+        Cell c = v->divider_cell;
+        *from = 0;
+        return (Sprite){
+            .x = VIDEO_DIVIDER_X,
+            .y = (s16)(VIDEO_HUD_LINES
+                       + k * VIDEO_DIVIDER_TILES * TILE_H),
+            .tile = c.tile, .w = VIDEO_DIVIDER_TILES,
+            .h = VIDEO_DIVIDER_TILES, .pal = c.pal, .prio = c.prio,
+            .flip_h = c.flip_h, .flip_v = c.flip_v
+        };
+    }
+    *from = first_line(v, k - d);
+    return v->sprite[k - d];
+}
+
 u32 video_sprites_crc(const Video *v)
 {
-    u8 b[VIDEO_SPRITES * 11];
+    int count = drawn_count(v);
+    u8 *b = malloc((size_t)(count > 0 ? count : 1) * 11);
+    if (b == NULL) {
+        return 0;
+    }
     size_t n = 0;
-    for (int i = 0; i < v->sprite_count; i++) {
-        const Sprite *s = &v->sprite[i];
-        int from = first_line(v, i);
+    for (int k = 0; k < count; k++) {
+        int from;
+        Sprite d = drawn_at(v, k, &from);
+        const Sprite *s = &d;
         if (!shown(s, from)) {
             continue;
         }
@@ -226,14 +266,17 @@ u32 video_sprites_crc(const Video *v)
         b[n++] = (u8)(from >> 8);
         b[n++] = (u8)from;
     }
-    return video_vdp_crc32(b, n);
+    u32 crc = video_vdp_crc32(b, n);
+    free(b);
+    return crc;
 }
 
 void video_sprites_print(const Video *v, FILE *f)
 {
-    for (int i = 0; i < v->sprite_count; i++) {
-        const Sprite *s = &v->sprite[i];
-        int from = first_line(v, i);
+    for (int k = 0; k < drawn_count(v); k++) {
+        int from;
+        Sprite d = drawn_at(v, k, &from);
+        const Sprite *s = &d;
         if (shown(s, from)) {
             fprintf(f, "%d %d %dx%d %04X %d from %d\n", s->x, s->y, s->w,
                     s->h, attr(s), s->colours, from);

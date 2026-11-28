@@ -33,28 +33,28 @@ void front_fill(HzGame *g, LayerId layer, int row, int rows, u16 word)
     video_fill_rows(g->video, layer, row, rows, cell_from_word(word));
 }
 
-/* M_DisplayOn ($565DC) / M_DisplayOff ($565F6): m_vdp_reg1's b6, then
- * the screen on or off by it. */
+/* The menus' screen on or off (M_DisplayOn, $565DC; M_DisplayOff,
+ * $565F6: m_vdp_reg1's b6, then the VDP's): off, their waits for a frame
+ * make none. */
 void front_display_on(HzGame *g)
 {
-    g->front.vdp_reg1 |= 0x40;
+    g->front.screen_on = true;
     video_display(g->video, true);
 }
 
 void front_display_off(HzGame *g)
 {
-    g->front.vdp_reg1 &= (u8)~0x40;
+    g->front.screen_on = false;
     video_display(g->video, false);
 }
 
-/* M_Init ($5300C): interrupts masked; M_VDPInit (the menus' layout:
- * MenuVDPInitRegs, m_vdp_reg1 $24, display off); m_palette cleared and
- * uploaded. */
+/* M_Init ($5300C): the game's frame work held (interrupts masked; the
+ * menus have none of their own); M_VDPInit (the menus' layout, the screen
+ * off); m_palette cleared and uploaded. */
 void front_init(HzGame *g)
 {
     HzFront *f = &g->front;
-    g->interrupts_on = false;
-    f->vdp_reg1 = 0x24;
+    g->frame_work_on = false;
     video_start_menus(g->video);
     front_display_off(g);
     for (int i = 0; i < 64; i++) {
@@ -92,10 +92,10 @@ void front_clear_sprites(HzGame *g)
 
 /* M_ClearPlanes ($5684E): layer B and the window filled with the
  * background tile ($30, palette 0), with the display off for it -- after
- * waiting for the frame if it was on. */
-void front_clear_planes(HzGame *g)
+ * waiting for the frame if it was on. (Session 80) After the frame, a
+ * step's HZ_RUN_FRAME. */
+void front_clear_planes_after(HzGame *g)
 {
-    front_frame(g);
     front_display_off(g);
     front_fill(g, LAYER_B, 0, PLANE_ROWS, 0x0030);
     front_fill(g, LAYER_W, 0, PLANE_ROWS, 0x0030);
@@ -118,11 +118,9 @@ void front_blank_planes(HzGame *g)
  * display on. M_WaitVBlank is only called with the display on (with it
  * off the status reads as VBlank throughout, and its wait for the flag to
  * clear would never end). */
-void front_frame(HzGame *g)
+bool front_frame_shown(const HzGame *g)
 {
-    if ((g->front.vdp_reg1 & 0x40) && g->frame != NULL && !g->quit) {
-        g->frame(g, g->frame_user);
-    }
+    return g->front.screen_on && !g->quit;
 }
 
 /* M_ReadJoypads ($568BA): both pads OR'd, active high, into a word whose
@@ -151,21 +149,20 @@ u16 front_read_pads(HzGame *g)
     return pressed;
 }
 
-/* M_WaitFramePad ($56948) and M_WaitFramePad2 ($5696A): a frame, then
- * the pads; the new presses. (They wait for the end of VBlank and for its
- * start respectively: a frame either way.) */
-u16 front_wait_pad(HzGame *g)
+/* M_WaitFrames ($5441A): n + 1 frames (dbf), fewer on quit. */
+void front_wait_frames_begin(HzGame *g, int n)
 {
-    front_frame(g);
-    return front_read_pads(g);
+    g->front_run.frames = (s16)(n + 1);
 }
 
-/* M_WaitFrames ($5441A): n + 1 frames (dbf). */
-void front_wait_frames(HzGame *g, int n)
+HzRun front_wait_frames_step(HzGame *g)
 {
-    for (int i = 0; i <= n && !g->quit; i++) {
-        front_frame(g);
+    HzFrontRun *r = &g->front_run;
+    if (r->frames <= 0 || g->quit) {
+        return HZ_RUN_DONE;
     }
+    r->frames--;
+    return HZ_RUN_FRAME;
 }
 
 /* -- text ------------------------------------------------------------------ */
@@ -340,31 +337,41 @@ void front_apply_fade(HzGame *g)
 }
 
 /* M_FadeToBlack ($56FF6): m_fade_level 0 to $1F, a step a frame, each
- * uploaded after the frame it was made in. */
-void front_fade_to_black(HzGame *g)
+ * uploaded after the frame it was made in. M_FadeFromBlack ($57042):
+ * m_fade_level $20 down to 0, a step a frame (33 frames), every colour
+ * from black up to its target. (Session 80) Each begun, then
+ * front_fade_step a frame at a time. */
+void front_fade_to_black_begin(HzGame *g)
 {
-    HzFront *f = &g->front;
-    f->fade_level = 0;
-    do {
-        front_apply_fade(g);
-        front_frame(g);
-        front_upload_lines(g, 0x0F);
-        f->fade_level++;
-    } while (f->fade_level < 0x20);
+    g->front.fade_level = 0;
+    g->front_run.fade_up = false;
+    g->front_run.fade_begun = false;
 }
 
-/* M_FadeFromBlack ($57042): m_fade_level $20 down to 0, a step a frame
- * (33 frames), every colour from black up to its target. */
-void front_fade_from_black(HzGame *g)
+void front_fade_from_black_begin(HzGame *g)
+{
+    g->front.fade_level = 0x20;
+    g->front_run.fade_up = true;
+    g->front_run.fade_begun = false;
+}
+
+HzRun front_fade_step(HzGame *g)
 {
     HzFront *f = &g->front;
-    f->fade_level = 0x20;
-    do {
-        front_apply_fade(g);
-        front_frame(g);
+    HzFrontRun *r = &g->front_run;
+    if (r->fade_begun) {
         front_upload_lines(g, 0x0F);
-        f->fade_level--;
-    } while (f->fade_level >= 0);
+        if (r->fade_up) {
+            if (--f->fade_level < 0) {
+                return HZ_RUN_DONE;
+            }
+        } else if (++f->fade_level >= 0x20) {
+            return HZ_RUN_DONE;
+        }
+    }
+    r->fade_begun = true;
+    front_apply_fade(g);
+    return HZ_RUN_FRAME;
 }
 
 /* -- sound ------------------------------------------------------------------- */
@@ -384,12 +391,47 @@ void front_play_sfx(HzGame *g, u8 sfx)
 /* Menu_TitleFlow ($53028): M_Init, the title; if it ran out (the title
  * song ended before Start) -1, the attract demo; else the options and 0,
  * a game with v_options as they left them. */
-int menu_title_flow(HzGame *g)
+void game_begin_title(HzGame *g)
+{
+    menu_title_flow_begin(g);
+    game_run_begin(g, menu_title_flow_step, true);
+}
+
+int game_title_result(const HzGame *g)
+{
+    return g->front_run.flow_result;
+}
+
+/* (Session 80) Its phases: the title, the options. */
+enum {
+    FLOW_TITLE,
+    FLOW_OPTIONS
+};
+
+void menu_title_flow_begin(HzGame *g)
 {
     front_init(g);
-    if (title_run(g) != 0) {
-        return -1;
+    title_run_begin(g);
+    g->front_run.flow_phase = FLOW_TITLE;
+}
+
+HzRun menu_title_flow_step(HzGame *g)
+{
+    HzFrontRun *r = &g->front_run;
+    if (r->flow_phase == FLOW_TITLE) {
+        if (title_run_step(g) == HZ_RUN_FRAME) {
+            return HZ_RUN_FRAME;
+        }
+        if (r->title_result != 0) {
+            r->flow_result = -1;
+            return HZ_RUN_DONE;
+        }
+        options_run_begin(g);
+        r->flow_phase = FLOW_OPTIONS;
     }
-    options_run(g);
-    return 0;
+    if (options_run_step(g) == HZ_RUN_FRAME) {
+        return HZ_RUN_FRAME;
+    }
+    r->flow_result = 0;
+    return HZ_RUN_DONE;
 }

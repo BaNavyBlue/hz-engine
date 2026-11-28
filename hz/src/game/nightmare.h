@@ -317,6 +317,12 @@ typedef struct {
     u32 strike_rest_until;       /* ... no strike near the place before
                                     this frame */
     s16 strike_rest_x, strike_rest_y;   /* ... the place (the last death) */
+    /* (Session 81) */
+    u16 covered;                 /* (P_FIGHT_COVER) fights left, every
+                                    place by the unit under too many
+                                    launchers */
+    u16 fight_graves;            /* (P_FIGHT_GRAVE) units left a while,
+                                    destroyed fighting them */
 } HzNightmare;
 
 /* (Session 61) Its state zeroed, keeping `own`'s track list (emptied);
@@ -338,7 +344,7 @@ void nightmare_think(HzGame *g, int p);
  * delay of three it overshot its landings and ran dry carrying. So it
  * thinks ahead: on a copy of the game run on to the pass its pad will be
  * read in, with the pads already chosen for the passes between, and its
- * memory taken back into g. Between passes (before game_frame's next):
+ * memory taken back into g. Between passes (before the frame loop's next):
  * pads[s][i], i 0..ahead, are side s's pads (HZ_PAD_* bits, as pad_in)
  * for the i-th pass from the next (a CPU side's are 0: it plays itself
  * in the copy); p's at `ahead` isn't used. Returns the pad p wants for

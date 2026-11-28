@@ -47,8 +47,8 @@
  * game would pace them: --debris destroys both mechs from the second
  * frame, their HP running down together from $180 by 3 a frame, over
  * and over (Sprites_DrawMechDebris draws them near both ends of the run,
- * and with the mechs close their 32 pieces meet the VDP's 20 sprites a
- * line); --alerts
+ * and with the mechs close their 32 pieces go past the VDP's 20 sprites
+ * a line, which the port draws all of: session 81); --alerts
  * sets what Sprites_DrawAlerts shows: mech_prod_state cycling 0, 1, 2
  * every $40 frames, mech_missile_dirs a different pattern every $10 (0
  * every fourth), and mech_hq_alert $B4 every $100 frames.
@@ -86,14 +86,15 @@
  * Map_ScanOutposts, Game_Start. Each panned frame is Game_FrameLoop as far
  * as it is ported: the camera step of Mechs_Update for P1 then P2,
  * UnitAI_Update (its group step: the map animates on groups 0 and 6),
- * HUD_UpdateGauges, Map_AnimTilesUpdate, Sprites_Build, Map_ScrollUpdate,
- * Sprites_Multiplex (game_frame_draw), then VDP_WaitVBlank and the uploads
- * (game_frame_end). The menus, sound, the units' updates and the attract
+ * HUD_UpdateGauges, Map_AnimTilesUpdate, Sprites_Build, Map_ScrollUpdate
+ * (game_frame_draw; the cartridge's Sprites_Multiplex is gone, session
+ * 81), then VDP_WaitVBlank and the uploads (game_begin_frame_end). The menus, sound, the units' updates and the attract
  * demo aren't ported yet. */
 
 #include "video_vdp.h"
 #include "../src/core/pngwrite.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/romcodes.h"
 #include "../src/game/tables.h"
 
@@ -541,7 +542,7 @@ static void stand_in_state(HzMech *m, int p, int f, const StandIns *si)
  * the stand-in for Mech_Update (clr.l mech_cam_dx, then a move that drags
  * the camera, the heading and the frame), then its camera step;
  * UnitAI_Update (the group step); game_frame_draw (HUD_UpdateGauges,
- * Map_AnimTilesUpdate, Sprites_Build, Map_ScrollUpdate, Sprites_Multiplex);
+ * Map_AnimTilesUpdate, Sprites_Build, Map_ScrollUpdate);
  * the wait and the uploads. The VDP holds what the uploads wrote, for the
  * cameras and mechs as they are now, from the next frame on. */
 static void pan_frame(HzGame *g, Shot *shot, const PanScript ps[2], int f,
@@ -576,7 +577,8 @@ static void pan_frame(HzGame *g, Shot *shot, const PanScript ps[2], int f,
     u8 hq_alert[2] = { g->mech[0].hq_alert, g->mech[1].hq_alert };
     game_frame_draw(g);
     snapshot(g, &shot->pending, altitude, hq_alert);
-    game_frame_end(g);
+    game_begin_frame_end(g);
+    tick_run(g, on_frame, shot);
     shot->cams[0] = g->camera[0];
     shot->cams[1] = g->camera[1];
     shot->shown = shot->pending;
@@ -683,17 +685,15 @@ int main(int argc, char **argv)
     game.units_frozen = true;       /* the view model doesn't follow the
                                        unit AI */
     game.cpus_frozen = true;   /* nor the CPU mechs' AI (make mechai) */
-    game.frame = on_frame;
-    game.frame_user = &shot;
     game.options[0] = (u8)mode;
     game.options[1] = (u8)difficulty;
     game.options[3] = (u8)map;
 
-    if (!game_new(&game)) {
+    if (!tick_new(&game, on_frame, &shot)) {
         fprintf(stderr, "hz_shot: map %d doesn't load\n", map);
         return 1;
     }
-    game_start(&game);
+    tick_start(&game, on_frame, &shot);
     if (units_path != NULL && !write_units(units_path, &game, spawn_probes,
                                            &shot)) {
         fprintf(stderr, "hz_shot: can't write %s\n", units_path);
@@ -716,7 +716,8 @@ int main(int argc, char **argv)
 
     /* The next frame as far as it is ported: what the draw layer holds now,
      * with HBlank's relink (VDP_WaitVBlank hands it to on_frame). */
-    game_wait_vblank(&game);
+    game_begin_wait(&game);
+    tick_run(&game, on_frame, &shot);
 
     int rc = 0;
     if (!write_png(out_path, &video, shot.idx)) {

@@ -107,7 +107,8 @@ const HzPoint MISSILE_ARROWS_WIDE[16] = {
 };
 
 /* SpriteMuxTable ($54F8): per page count (row) and phase 0..$B, which
- * 70-entry window Sprites_Multiplex sends. */
+ * 70-entry window Sprites_Multiplex sends. (Session 81) Kept as the
+ * cartridge's data; the game draws every sprite and reads it no more. */
 const u8 SPRITE_MUX_TABLE[4][16] = {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0 },

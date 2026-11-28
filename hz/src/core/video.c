@@ -54,9 +54,13 @@ static void tell(const Video *v, const VideoChange *c)
 
 void video_init(Video *v)
 {
+    Sprite *sprite = v->sprite;
+    int sprite_cap = v->sprite_cap;
     Sprite *behind = v->behind;
     u32 cap = v->behind_cap;
     memset(v, 0, sizeof *v);
+    v->sprite = sprite;
+    v->sprite_cap = sprite_cap;
     v->behind = behind;
     v->behind_cap = cap;
     v->layout = VIDEO_GAME_SPLIT;
@@ -75,6 +79,7 @@ static void sprites_clear(Video *v)
     v->held = false;
     v->back_at = -1;
     v->behind_count = 0;
+    v->divider = false;
 }
 
 void video_start_game(Video *v, bool split)
@@ -209,11 +214,23 @@ void video_sprites_begin(Video *v)
 
 bool video_sprite_push(Video *v, const Sprite *s)
 {
-    if (v->sprite_count >= VIDEO_SPRITES) {
-        return false;
+    if (v->sprite_count >= v->sprite_cap) {
+        int cap = v->sprite_cap ? v->sprite_cap * 2 : 512;
+        Sprite *b = realloc(v->sprite, (size_t)cap * sizeof *b);
+        if (b == NULL) {
+            return false;                   /* out of memory: not drawn */
+        }
+        v->sprite = b;
+        v->sprite_cap = cap;
     }
     v->sprite[v->sprite_count++] = *s;
     return true;
+}
+
+void video_divider(Video *v, bool on, Cell cell)
+{
+    v->divider = on;
+    v->divider_cell = cell;
 }
 
 void video_sprites_game(Video *v)
@@ -350,53 +367,41 @@ static bool on_line(const Sprite *s, int y)
     return y >= s->y && y < s->y + s->h * TILE_H;
 }
 
-/* The sprites' pixels on line y: the list's, first on top, by the game's
- * rule (VIDEO_LINE_SPRITES of them on a line and VIDEO_LINE_DOTS of their
- * pixels; and the cartridge's mask: a sprite at x -128 ends the line once
- * a sprite elsewhere has been drawn on it); then the units behind, where
- * the game's sprites are drawn and no mask ended the line. */
+/* The sprites' pixels on line y, first on top: the split game's divider
+ * (in front of every sprite, as the cartridge's six, first in its table,
+ * were); the list's; then the units behind, where the game's sprites are
+ * drawn. Every sprite on the line is drawn. */
 static void line_sprites(const Video *v, int y, Px spr[SCREEN_W])
 {
     memset(spr, 0, sizeof(Px) * SCREEN_W);
+
+    if (v->divider && v->layout == VIDEO_GAME_SPLIT
+        && y >= VIDEO_HUD_LINES) {
+        int size = VIDEO_DIVIDER_TILES * TILE_H;
+        Sprite d = {
+            .x = VIDEO_DIVIDER_X,
+            .y = (s16)(y - (y - VIDEO_HUD_LINES) % size),
+            .tile = v->divider_cell.tile,
+            .w = VIDEO_DIVIDER_TILES, .h = VIDEO_DIVIDER_TILES,
+            .pal = v->divider_cell.pal, .prio = 1,
+            .flip_h = v->divider_cell.flip_h,
+            .flip_v = v->divider_cell.flip_v
+        };
+        sprite_line(v, spr, &d, y - d.y, d.w * TILE_W);
+    }
 
     bool game = !v->held || (v->back_at >= 0 && y >= v->back_at);
     int  last = game ? v->sprite_count
                      : (v->game_at < v->sprite_count ? v->game_at
                                                      : v->sprite_count);
-    const Sprite *list[VIDEO_LINE_SPRITES];
-    int count = 0;
     for (int i = 0; i < last; i++) {
-        if (on_line(&v->sprite[i], y)) {
-            if (count == VIDEO_LINE_SPRITES) {
-                break;
-            }
-            list[count++] = &v->sprite[i];
+        const Sprite *s = &v->sprite[i];
+        if (on_line(s, y)) {
+            sprite_line(v, spr, s, y - s->y, s->w * TILE_W);
         }
     }
 
-    bool behind = game;
-    int  dots = VIDEO_LINE_DOTS;
-    bool seen = false;
-    for (int i = 0; i < count; i++) {
-        const Sprite *s = list[i];
-        if (s->x == -128) {
-            if (seen) {
-                behind = false;
-                break;
-            }
-        } else {
-            seen = true;
-        }
-        int wpx = s->w * TILE_W;
-        if (dots <= 0) {
-            break;
-        }
-        int draw = wpx > dots ? dots : wpx;
-        dots -= wpx;
-        sprite_line(v, spr, s, y - s->y, draw);
-    }
-
-    if (!behind) {
+    if (!game) {
         return;
     }
     for (u32 i = 0; i < v->behind_count; i++) {

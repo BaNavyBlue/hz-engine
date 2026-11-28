@@ -76,11 +76,10 @@ port):
   - the order, front to back: divider, jets (P2 a jet: P2's own before
     P1's, else P1's first), then the list: outpost bars (view A, B),
     shadows or debris (P1, P2), robots (P1, P2), each own view then the
-    other, units, with the alerts ahead of everything in the list (more
-    than 70 list entries: an error, Sprites_Multiplex isn't modelled);
-    game sprites
-    only from line 32 (the HUD strip cut); the VDP's 20 sprites and 320
-    dots a line;
+    other, units, with the alerts ahead of everything in the list, every
+    one drawn (session 81: no cap, no flicker, no 20 sprites or 320 dots
+    a line, docs/hackable.md); game sprites only from line 32 (the HUD
+    strip cut);
   - over the planes: a sprite pixel shows unless it is low priority and
     the plane pixel under it is high priority and not transparent.
 
@@ -506,8 +505,6 @@ def model_sprites(rom, m, mode, cams, st, units=()):
     for group in shadows + robots:
         listed += group
     listed += unit_sprites(units, mode, cams, st, len(listed))
-    if len(listed) > 70:
-        raise ValueError('%d list entries: Sprites_Multiplex not modelled' % len(listed))
     return out + listed
 
 
@@ -724,33 +721,11 @@ def debris(rom, mode, cams, mechs, p):
 
 def sprite_layer(rom, m, sprites, frames):
     """The sprite pixels (index, -1 none) and their priority, front sprite
-    on top, lines 32 up, with the VDP's 20 sprites / 320 dots per line."""
+    on top, lines 32 up, every sprite drawn (session 81)."""
     layer = np.full((H, W), -1, np.int16)
     prio = np.zeros((H, W), bool)
-    # Columns of each sprite the line limits let through, per line; only
-    # worked out line by line when some line could reach a limit.
-    allow = [np.full(s.h * 8, s.w * 8) for s in sprites]
-    count = np.zeros(H, int)
-    dots = np.zeros(H, int)
-    for s in sprites:
-        count[max(s.y, 0):max(s.y + s.h * 8, 0)] += 1
-        dots[max(s.y, 0):max(s.y + s.h * 8, 0)] += s.w * 8
-    for y in np.nonzero((count > 20) | (dots > 320))[0]:
-        if y < 32:
-            continue
-        n = d = 0
-        for i, s in enumerate(sprites):
-            if not s.y <= y < s.y + s.h * 8:
-                continue
-            if n == 20 or d >= 320:
-                allow[i][y - s.y] = 0
-                continue
-            n += 1
-            allow[i][y - s.y] = min(s.w * 8, 320 - d)
-            d += s.w * 8
     for i, s in enumerate(sprites):
         img = sprite_image(rom, m, s, frames)
-        img = np.where(np.arange(s.w * 8)[None, :] < allow[i][:, None], img, 0)
         y0, y1 = max(s.y, 32), min(s.y + s.h * 8, H)
         x0, x1 = max(s.x, 0), min(s.x + s.w * 8, W)
         if y0 >= y1 or x0 >= x1:

@@ -45,7 +45,8 @@ VDP's limits allow. On:
 - **Every unit is drawn, none flickers.** The units' sprites go past the
   VDP's table of 80 (and its 20 a line); they are drawn behind the table's
   sprites, so the mechs, the shots, the outposts' bars and the order menu
-  are in front of the units now.
+  are in front of the units now. (Session 81: with or without UNITS every
+  sprite is drawn, docs/hackable.md; UNITS' crowd stays behind the rest.)
 - The order menu's count shows two digits as before; from 100 it widens
   left over the two blanks between the money's G and it: four digits, then
   thousands and a K (10K from 10,000).
@@ -136,11 +137,12 @@ overlapping.
 
 `sprites.c` draws every unit in a view into `HzGame.sprite_more` (the
 marker, the turret, the unit, front to back, as the original's), not into
-the 70-entry window Sprites_Multiplex shares out; VDP_UploadSprites hands
-them to the VDP (`vdp_set_more`), which draws them behind its table's
-sprites on every line its links reach the window's first sprite ($A) --
-so not on the HUD strip, whose lines the split's cut link ends at sprite
-5 -- and not on a line a sprite at x 0 masks. No limit a line or a frame.
+the 70-entry window Sprites_Multiplex shared out; VDP_UploadSprites hands
+them to the draw layer (`video_sprites_behind`, since session 80), which
+draws them behind the frame's other sprites on every line the game's
+sprites are drawn on -- so not on the HUD strip, which holds them back.
+No limit a line or a frame. (Until session 81 not on a line a sprite at x
+0 masked either: the layer has no such mask now, nor any cap.)
 `game_title_prepare` and VDP_Init clear them.
 
 ## Tools

@@ -35,11 +35,20 @@
  * the screen and the sound, not how the screen is held: two builds that
  * draw the same frames another way compare. --frame N FILE (session 80)
  * writes frame N as drawn: its 320 x 224 colour indices, then the 64
- * colours (big-endian words). Summary on stdout. Set HZ_SAVES to an empty
- * folder: a won game is saved there and CONT reads it back. */
+ * colours (big-endian words). --asked (session 81, docs/hackable.md
+ * step 1's rest) folds the state, the layer's tiles, cells, colours,
+ * scroll and layout, the sprites the game asked for and the sound, not
+ * the screen nor the layer's sprites: so a build that draws every sprite
+ * compares with one that drew the cartridge's 80 (the screen differs
+ * wherever the cartridge flickered). The sprites asked for: the mechs'
+ * four fixed sprites (6-9) and the frame's list, each entry, then
+ * UNITS' crowd, in screen pixels, as Sprites_Build left them for the
+ * next upload. Summary on stdout. Set HZ_SAVES to an empty folder: a won
+ * game is saved there and CONT reads it back. */
 
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/statehash.h"
 
 #include <stdio.h>
@@ -65,9 +74,9 @@ static u64 next_random(u64 *s)
 
 typedef enum {
     WHERE_TITLE = 0,    /* the title and the options screen */
-    WHERE_LOAD,         /* game_setup_after_title: the loading screen */
+    WHERE_LOAD,         /* the setup: the loading screen */
     WHERE_GAME,         /* the frame loop */
-    WHERE_OVER,         /* game_over */
+    WHERE_OVER,         /* Game_Over to the title */
     WHERE_COUNT
 } Where;
 
@@ -150,6 +159,7 @@ typedef struct {
     int      frame_at;      /* --frame N FILE: frame N's picture */
     const char *frame_path;
     bool     seen;          /* --seen: what is seen and heard only */
+    bool     asked;         /* --asked: the sprites asked for, not drawn */
     int      frames_in[WHERE_COUNT];
     int      games, demos, overs;
 } Run;
@@ -157,6 +167,34 @@ typedef struct {
 static Run g_run;
 
 static u8 g_screen[SCREEN_W * SCREEN_H];
+
+/* --asked's: a sprite's fields, a byte or word at a time. */
+static u64 fnv_sprite(u64 h, const Sprite *s)
+{
+    u8 b[13] = {
+        (u8)((u16)s->x >> 8), (u8)s->x, (u8)((u16)s->y >> 8), (u8)s->y,
+        (u8)(s->tile >> 8), (u8)s->tile, s->w, s->h, s->pal, s->prio,
+        s->flip_h, s->flip_v, s->colours
+    };
+    return fnv(h, b, sizeof b);
+}
+
+static u64 asked_hash(const HzGame *g)
+{
+    u64 h = FNV_BASIS;
+    for (int i = 6; i < HZ_SPRITE_FIXED; i++) {
+        Sprite s = sprite_from_ram(&g->sprite_fixed[i]);
+        h = fnv_sprite(h, &s);
+    }
+    for (int i = 0; i < g->sprite_count && i < HZ_SPRITE_LIST; i++) {
+        h = fnv_sprite(h, &g->sprite_list[i]);
+    }
+    for (u32 i = 0; i < g->sprite_more.count; i++) {
+        h = fnv_sprite(h, &g->sprite_more.sprite[i]);
+    }
+    u8 n[2] = { (u8)(g->sprite_count >> 8), (u8)g->sprite_count };
+    return fnv(h, n, sizeof n);
+}
 
 static void on_sound(void *user, const u8 *bytes, int count)
 {
@@ -179,7 +217,13 @@ static void on_frame(HzGame *g, void *user)
     state_hash_parts(g, part);
     part[10] = fnv(FNV_BASIS, g_screen, sizeof g_screen);
     part[11] = r->sound;
-    if (r->seen) {
+    if (r->asked) {
+        u64 asked[11];
+        memcpy(asked, part, 9 * sizeof asked[0]);
+        asked[9] = asked_hash(g);
+        asked[10] = part[11];
+        r->hash = state_hash_fold(r->hash, asked, 11);
+    } else if (r->seen) {
         /* (Session 79) The game, the screen and the sound, not how the
          * screen is held: so a build that draws another way (the VDP
          * model then, the draw layer now: docs/hackable.md) compares. */
@@ -236,6 +280,51 @@ static void on_frame(HzGame *g, void *user)
     }
 }
 
+/* (Session 81) What MainLoop_Title tells: where the player is, the
+ * title's picks, the game's G and X lines. */
+static void on_event(HzGame *g, void *user)
+{
+    Run *r = user;
+    switch ((HzEvent)g->event) {
+        case HZ_EVENT_TITLE: {
+            r->where = WHERE_TITLE;
+            r->title_frames = 0;
+            r->title_idle = next_random(&r->choices) % 4 == 0;
+            break;
+        }
+        case HZ_EVENT_SETUP: {
+            r->where = WHERE_LOAD;
+            break;
+        }
+        case HZ_EVENT_GAME: {
+            if (g->game_type < 0) {
+                r->demos++;
+            } else {
+                r->games++;
+            }
+            fprintf(r->out, "G %d %d %d %d%s\n", r->done, g->options[0],
+                    g->options[3] & 7, g->options[1],
+                    g->game_type < 0 ? " demo" : "");
+            r->where = WHERE_GAME;
+            break;
+        }
+        case HZ_EVENT_ENDED: {
+            HzLoopExit exit = (HzLoopExit)g->frame_exit;
+            fprintf(r->out, "X %d %s\n", r->done,
+                    exit == HZ_LOOP_GAME_OVER ? "over"
+                    : exit == HZ_LOOP_TITLE ? "title" : "quit");
+            if (exit == HZ_LOOP_GAME_OVER) {
+                r->overs++;
+                r->where = WHERE_OVER;
+            }
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
 /* Title_WaitStart's z_music_on: the title's song plays for
  * TITLE_SONG_FRAMES. */
 static bool music_on(void *user)
@@ -248,7 +337,8 @@ int main(int argc, char **argv)
 {
     if (argc < 5) {
         fprintf(stderr, "usage: hz_netcheck ASSETS SEED FRAMES OUT "
-                        "[--verbose FROM TO] [--seen] [--frame N FILE]\n");
+                        "[--verbose FROM TO] [--seen] [--asked] "
+                        "[--frame N FILE]\n");
         return 2;
     }
     static HzAssets assets;
@@ -272,6 +362,8 @@ int main(int argc, char **argv)
             r->verbose_to = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--seen") == 0) {
             r->seen = true;
+        } else if (strcmp(argv[i], "--asked") == 0) {
+            r->asked = true;
         } else {
             fprintf(stderr, "hz_netcheck: what is %s?\n", argv[i]);
             return 2;
@@ -295,8 +387,6 @@ int main(int argc, char **argv)
     HzGame *g = &game;
     video_init(&video);
     game_init(g, &assets, &video);
-    g->frame = on_frame;
-    g->frame_user = r;
     g->snd_music_on = music_on;
     g->snd_post = on_sound;
     g->snd_user = r;
@@ -313,53 +403,12 @@ int main(int argc, char **argv)
     g->options[0] = MODES[next_random(&r->choices) % 6];
     g->options[1] = (u8)(next_random(&r->choices) % 4);
     g->options[3] = (u8)(next_random(&r->choices) % HZ_MAPS);
-    bool skip_title = true;
-
-    while (!g->quit) {                      /* MainLoop_Title */
-        r->where = WHERE_TITLE;
-        r->title_frames = 0;
-        r->title_idle = next_random(&r->choices) % 4 == 0;
-        game_title_prepare(g);
-        g->game_type = 0;
-        if (!skip_title) {
-            g->game_type = (s16)menu_title_flow(g);
-            if (g->quit) {
-                break;
-            }
-        }
-        skip_title = false;
-        r->where = WHERE_LOAD;
-        HzSetup setup = game_setup_after_title(g);
-        if (setup == HZ_SETUP_NO_MAP) {
-            fprintf(stderr, "hz_netcheck: map %d doesn't load\n",
-                    g->options[3] & 7);
-            return 1;
-        }
-        if (setup == HZ_SETUP_ABORTED || g->quit) {
-            continue;
-        }
-        if (g->game_type < 0) {
-            r->demos++;
-        } else {
-            r->games++;
-        }
-        fprintf(r->out, "G %d %d %d %d%s\n", r->done, g->options[0],
-                g->options[3] & 7, g->options[1],
-                g->game_type < 0 ? " demo" : "");
-        r->where = WHERE_GAME;
-        game_start(g);
-        HzLoopExit exit = game_frame(g, false);
-        while (exit == HZ_LOOP_ON) {
-            exit = game_frame(g, true);
-        }
-        fprintf(r->out, "X %d %s\n", r->done,
-                exit == HZ_LOOP_GAME_OVER ? "over"
-                : exit == HZ_LOOP_TITLE ? "title" : "quit");
-        if (exit == HZ_LOOP_GAME_OVER) {
-            r->overs++;
-            r->where = WHERE_OVER;
-            game_over(g);
-        }
+    /* MainLoop_Title, the first game with no title */
+    tick_main(g, HZ_MAIN_NO_TITLE, on_frame, on_event, r);
+    if (g->setup_result == HZ_SETUP_NO_MAP) {
+        fprintf(stderr, "hz_netcheck: map %d doesn't load\n",
+                g->options[3] & 7);
+        return 1;
     }
     fprintf(r->out, "E %d %016llX %d %d\n", r->done,
             (unsigned long long)r->hash, r->games, r->demos);

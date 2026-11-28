@@ -1,6 +1,7 @@
 #include "game.h"
 #include "nm_atlas.h"
 #include "tables.h"
+#include "tick.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -550,7 +551,17 @@ _Static_assert(NM_OUTPOSTS == HZ_POST_OUTPOSTS,
       "... frames") \
     X(HUNT_STRIKE,   hunt_strike,   1, \
       "(session 77) against a human, 1: hunters for the SAM-42s within " \
-      "STRIKE_R of its HQ too (the nest it would strike at)")
+      "STRIKE_R of its HQ too (the nest it would strike at)") \
+    X(FIGHT_COVER,   fight_cover,   4, \
+      "(session 81) against a human, no fight or strike with an enemy " \
+      "unit when every place to land by it is in the missiles' reach of " \
+      "this many of the enemy's SAM-42s and GRM-34As or more (unless the " \
+      "unit is sent at the HQ or about to shoot it), and of the places " \
+      "by it the one the fewest reach (0 as before)") \
+    X(FIGHT_GRAVE,   fight_grave,   1, \
+      "(session 81) against a human, 1: an enemy unit the mech was " \
+      "destroyed fighting is not taken on again for 30 s, unless it is " \
+      "sent at the HQ or about to shoot it (0 as before)")
 
 enum {
 #define NM_ENUM(id, name, def, what) P_##id,
@@ -3191,6 +3202,14 @@ static bool fight_place_any(Nm *n, const Tgt *t)
  * last NM_NOFIGHT_FRAMES. */
 #define NM_NOFIGHT_FRAMES 1800
 
+static void nofight_add(Nm *n, HzRef r)
+{
+    HzNightmare *s = n->s;
+    s->nofight[s->nofight_next] = r;
+    s->nofight_at[s->nofight_next] = s->frames;
+    s->nofight_next = (u8)((s->nofight_next + 1) % NM_NOFIGHT);
+}
+
 static bool nofight(const Nm *n, HzRef r)
 {
     const HzNightmare *s = n->s;
@@ -3202,6 +3221,67 @@ static bool nofight(const Nm *n, HzRef r)
         }
     }
     return false;
+}
+
+/* (Session 81, P_FIGHT_COVER) the owner's game of 27 November (EISFREI,
+ * the server's AI P2): its outpost 6, 560 px from its HQ, was taken from
+ * it at 19:24 and ringed with SAM-42s and GRM-34As, kept by SUPPLYs and
+ * a repair truck. From 19:15 to 43:31 its mech was destroyed 42 times, 30
+ * of them on foot, most a second or two after landing to fight a unit of
+ * that ring. Taken over at 25:00 against the turtle (12 seeds), it was
+ * destroyed 16.7 times in six minutes; in the first seed 15 times, 14 by
+ * the launchers' missiles, 9 on strikes at the ring and 6 on fights with
+ * it. Against a human the launchers are counted now (n->missiles): a
+ * unit with no place by it reached by fewer than FIGHT_COVER of them is
+ * not fought, unless it is sent at the HQ or about to shoot it, and of
+ * the places by one the one the fewest reach is taken. Four, not two:
+ * on ABGRUND (The owner's game of 31 October, 06:53, taken over at
+ * 30:00) its strikes at the nest by its HQ killed 4.5 of it a game, and
+ * with two or three it lost 6 games of 6 there (2 before, 3 with four);
+ * on the 27th four keeps it off the ring as two does. */
+static bool hq_soon(const Nm *n, const HzUnit *u);
+
+static bool cover_on(const Nm *n)
+{
+    return g_param[P_FIGHT_COVER] > 0 && vs_human(n);
+}
+
+/* The enemy launchers whose missiles reach the mech landed at (x, y). */
+static int cover_at(const Nm *n, int x, int y)
+{
+    return n->missiles[clamp63((y + 16) >> 5)][clamp63((x + 16) >> 5)];
+}
+
+/* The fewest launchers reaching a place fight_spot would land on by
+ * (cx, cy) (40 to 112 px off it; its ground not looked at). */
+static int spot_cover(const Nm *n, int cx, int cy)
+{
+    int best = 255;
+    for (int k = 0; k < 16 * 10 && best > 0; k++) {
+        int d = k & 15;
+        int r = 40 + (k >> 4) * 8;
+        int sx = edge_snap(cx + SINE_TABLE[d].x * r / 32 - 16);
+        int sy = edge_snap(cy + SINE_TABLE[d].y * r / 32 - 16);
+        if (sx >= 0 && sy >= 0 && sx <= 0x7E0 && sy <= 0x7E0) {
+            best = imin(best, cover_at(n, sx, sy));
+        }
+    }
+    return best;
+}
+
+/* A unit sent at the HQ, or about to shoot it, is left to the rules that
+ * were (NEST_WAIT's, HOME_GRAVES'): wherever it is fought, it is coming
+ * to the HQ. */
+static bool hq_bound(const Nm *n, const HzUnit *u)
+{
+    return u->order == ORDER_ATTACK_HQ || hq_soon(n, u);
+}
+
+/* Is the fight with unit u too covered to take on? */
+static bool too_covered(const Nm *n, const HzUnit *u)
+{
+    return cover_on(n) && !hq_bound(n, u)
+           && spot_cover(n, ucx(u), ucy(u)) >= g_param[P_FIGHT_COVER];
 }
 
 /* A landing place from where the target will be: `range` px off by
@@ -3230,7 +3310,8 @@ static bool fight_spot(Nm *n, const Tgt *t, int range, s16 *ox, s16 *oy)
             continue;
         }
         if (danger_at(n, sx, sy) & DANGER_MISSILE) {
-            dd += 2000;
+            /* (session 81, P_FIGHT_COVER) the fewer launchers the better */
+            dd += cover_on(n) ? 2000 * cover_at(n, sx, sy) : 2000;
         }
         /* a line of fire: the heading back along the ray ((session 73)
          * from a place moved to the edge, the heading from there) */
@@ -3306,9 +3387,7 @@ static void task_fight(Nm *n)
                  * hovered over the water by it for ten minutes, the fight
                  * timing out and taken up again. Left alone a while: the
                  * guards are for it (P_DEFEND, boats on the water) */
-                s->nofight[s->nofight_next] = s->target;
-                s->nofight_at[s->nofight_next] = s->frames;
-                s->nofight_next = (u8)((s->nofight_next + 1) % NM_NOFIGHT);
+                nofight_add(n, s->target);
                 s->unreachable++;
                 s->target = ref_none();
                 set_task(n, NM_TASK_DECIDE);
@@ -3322,6 +3401,20 @@ static void task_fight(Nm *n)
                  * the top edge 78 s over a man 10 px from it): the other */
                 s->goal_y = (s16)(tcy(t) - 16 + g_param[P_FIGHT_RANGE]);
             }
+        } else if (cover_on(n) && !s->sieging
+                   && s->target.kind != REF_MECH
+                   && cover_at(n, s->goal_x, s->goal_y)
+                      >= g_param[P_FIGHT_COVER]
+                   && !hq_bound(n, ref_unit_ptr_c(n->g, s->target))) {
+            /* (session 81, P_FIGHT_COVER) the best place by it in the
+             * reach of too many launchers (the ring grew, or it moved
+             * in): left a while */
+            nofight_add(n, s->target);
+            s->covered++;
+            s->target = ref_none();
+            s->striking = false;
+            set_task(n, NM_TASK_DECIDE);
+            return;
         }
         int d = fly_to(n, s->goal_x, s->goal_y, 4);
         /* down now if here will do: landable, in reach of it and not on
@@ -3903,7 +3996,7 @@ static HzRef pick_threat(const Nm *n, long *score_out)
                           [clamp63(ucx(u) >> 5)] & DANGER_MISSILE)) {
             score /= 4;
         }
-        if (score > best_score) {
+        if (score > best_score && !too_covered(n, u)) {
             best_score = score;
             best = unit_ref(u);
         }
@@ -4610,7 +4703,6 @@ static int drive_setup(Nm *n, int gx, int gy, bool nest, u32 salt)
     HzGame *c = g_drive_game;
     game_copy(c, n->g);
     c->video = NULL;                /* units never draw */
-    c->frame = NULL;
     c->unit_ai_probe = NULL;
     c->combat_probe = NULL;
     c->units_frozen = false;
@@ -8371,6 +8463,10 @@ static HzRef pick_strike(const Nm *n)
         if (d == 0x7FFF || nofight(n, unit_ref(u))) {
             continue;
         }
+        if (cover_on(n)
+            && spot_cover(n, ucx(u), ucy(u)) >= g_param[P_FIGHT_COVER]) {
+            continue;       /* (session 81) */
+        }
         if (s->strike_rest_until != 0 && s->frames < s->strike_rest_until
             && chebyshev(ucx(u) - s->strike_rest_x, ucy(u) - s->strike_rest_y)
                <= 320) {
@@ -8965,6 +9061,16 @@ void nightmare_think(HzGame *g, int p)
                 && s->hp_was < kidou(&n)->stats.hp / 3) {
                 s->fought_on++;         /* (session 74) */
             }
+            const HzUnit *fu = s->task == NM_TASK_FIGHT && !s->sieging
+                               ? ref_unit_ptr_c(n.g, s->target) : NULL;
+            if (fu != NULL && g_param[P_FIGHT_GRAVE] && vs_human(&n)
+                && unit_alive(fu) && !hq_bound(&n, fu)) {
+                /* (session 81) not again straight away: on the ring
+                 * round its outpost (P_FIGHT_COVER) it went for the same
+                 * GRM-34A three times running, destroyed each time */
+                nofight_add(&n, s->target);
+                s->fight_graves++;
+            }
             if (s->task == NM_TASK_FIGHT && s->striking
                 && g_param[P_STRIKE_GIVEUP] > 0 && vs_human(&n)
                 && ++s->strike_row >= g_param[P_STRIKE_GIVEUP]) {
@@ -9117,8 +9223,6 @@ u8 nightmare_think_ahead(HzGame *g, int p, int ahead, const u8 *const pads[2])
     game_copy(c, g);
     c->video = &a->video;       /* the copy draws on its own (nothing in
                                    the game reads the layer back) */
-    c->frame = ahead_frame;
-    c->frame_user = a;
     c->mech_probe = ahead_mech;
     c->mech_probe_user = a;
     c->combat_probe = NULL;
@@ -9137,7 +9241,8 @@ u8 nightmare_think_ahead(HzGame *g, int p, int ahead, const u8 *const pads[2])
     for (int s = 0; s < 2; s++) {
         pad_set(&c->pad_in[s], pads[s][0]);
     }
-    while (!a->thought && game_frame(c, true) == HZ_LOOP_ON) {
+    while (!a->thought
+           && tick_pass(c, true, ahead_frame, a) == HZ_LOOP_ON) {
     }
     if (a->thought) {
         nightmare_copy(&g->nightmare[p], &c->nightmare[p]);
@@ -9183,7 +9288,8 @@ const char *nightmare_summary(const HzGame *g, int p)
              "freebuys %u supplies %u strikes %u strikekills %u "
              "foughton %u holdgaveup %u supplybuys %u repairbuys %u "
              "nobodybuys %u theirbuys %u lanedrops %u yarddrops %u "
-             "trucklifts %u homebuys %u homepickups %u strikegiveups %u",
+             "trucklifts %u homebuys %u homepickups %u strikegiveups %u "
+             "covered %u fightgraves %u",
              s->deaths, s->death_fuel, s->death_carrying, s->death_robot,
              s->kills, s->rival_kills, s->delivered, s->captures_sent,
              s->buys, s->walled, s->unstuck, s->gathered, s->groups,
@@ -9200,7 +9306,8 @@ const char *nightmare_summary(const HzGame *g, int p)
              s->fought_on, s->hold_given_up, s->bought[UNIT_SUPPLY],
              s->bought[UNIT_REPAIR], s->nobody_buys, s->their_buys,
              s->lane_drops, s->yard_drops, s->truck_lifts, s->home_buys,
-             s->home_pickups, s->strike_giveups);
+             s->home_pickups, s->strike_giveups, s->covered,
+             s->fight_graves);
     return text;
 }
 
@@ -9212,7 +9319,7 @@ const char *nightmare_describe(const HzGame *g, int p)
     int len = snprintf(text, sizeof text, "[%s/%u goal %d,%d final %d,%d "
                        "post %u buys %u deaths %u kills %u shots %u fights "
                        "%u dog %u/%u cap %d/%u prod %02X dir %u pad %02X/%02X "
-                       "tr %02X v %d,%d gr %d rally %d,%d%s]",
+                       "tr %02X v %d,%d gr %d rally %d,%d%s%s]",
                        TASK_NAME[s->task < NM_TASK_COUNT ? s->task : 0],
                        s->stage, s->goal_x, s->goal_y, s->final_x,
                        s->final_y, s->goal_post, s->buys, s->deaths,
@@ -9223,7 +9330,10 @@ const char *nightmare_describe(const HzGame *g, int p)
                        m->vel_y, mech_ground_at(g, m, m->x, m->y),
                        s->rally_set ? s->rally_x : -1,
                        s->rally_set ? s->rally_y : -1,
-                       s->launching ? " going" : "");
+                       s->launching ? " going" : "",
+                       s->task != NM_TASK_FIGHT ? ""
+                       : s->striking ? " strike"
+                       : s->sieging ? " siege" : "");
     const HzUnit *tu = ref_unit_ptr_c(g, s->target);
     if (s->target.kind == REF_MECH && len > 0 && len < (int)sizeof text) {
         const HzMech *e = &g->mech[1 - p];

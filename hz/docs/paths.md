@@ -36,7 +36,7 @@ its fuel runs out.
 every place on the map to one goal, for one footprint and one top speed.
 It depends on the map alone, so the AI's drive tests and both machines of
 a network game have the same ones, whenever each was made. With PATHS on,
-`game_start` makes every field the game's units could want
+Game_Start (`game_start_step`) makes every field the game's units could want
 (`paths_prepare`): each outpost and HQ, for each unit type that moves but
 the SUPPLY; a unit's speed, and INFANTRY's lighter push, matter only on a
 map with currents (ABGRUND, VULKAN, EISFREI: 6 fields a goal, else 3).

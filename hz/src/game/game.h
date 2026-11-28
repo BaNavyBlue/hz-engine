@@ -8,9 +8,8 @@
 
 #define HZ_SPRITE_LIST     298  /* v_sprite_list: the $950 bytes Sprites_Build
                                    clears (37 x 64 + 16) */
-#define HZ_SPRITE_WINDOW   70   /* entries VDP_UploadSprites DMAs to $D050 */
-#define HZ_SPRITE_FIXED    10   /* sprites 0-9 (v_sprite_fixed): the window
-                                   is from sprite $A */
+#define HZ_SPRITE_FIXED    10   /* sprites 0-9 (v_sprite_fixed): the list's
+                                   entries came after them */
 #define HZ_UNITS           100  /* the 68k's v_units1/2, 50 a team: the
                                    checks' layout (tools/rom_refs.h) */
 #define HZ_SIDE_UNITS      50   /* (session 61) a side's units in the
@@ -95,10 +94,81 @@ typedef enum {
     HZ_LOOP_QUIT        /* the port's own: the host has asked to stop */
 } HzLoopExit;
 
-/* A sprite as the cartridge's RAM holds it (v_sprite_fixed, v_sprite_list,
- * the order menu's radar, the loading screen's): its words in the VDP's
- * sprite table format. sprites_upload hands the frame's to the draw layer
- * in screen pixels (Sprite, video.h). */
+/* (Session 80) Game_Over's finale a frame at a time (game_over.c): its
+ * phase; GameOver_DestroyHQ's shake, which of its three loops, the frames
+ * in it, which half of a frame (two uploads, a frame each); where the
+ * explosions go (each HQ's, or the lost one's twice); the shake itself:
+ * the scroll shaken (0 plane A, 1 plane B, (session 66) 2 both), frames
+ * so far, the offset of the pair. */
+typedef struct {
+    u8  phase;
+    u8  loop;
+    u8  half;
+    u16 i;
+    s16 x[2], y[2];
+    u8  plane;
+    u16 frames;
+    s16 dx, dy;
+} HzOverRun;
+
+/* (Session 80, docs/hackable.md step 2) A sequence that runs over several
+ * frames is stepped: each step goes on from where the last stopped and
+ * says how it stopped -- it has made a frame and waits for it to be shown
+ * (where the 68k calls VDP_WaitVBlank), or it is done. (Session 81) Or,
+ * MainLoop_Title's alone (game_begin_main), it has come to a place where
+ * the host is told something (g->event) and does its own work there. */
+typedef enum {
+    HZ_RUN_FRAME = 0,
+    HZ_RUN_DONE,
+    HZ_RUN_EVENT
+} HzRun;
+
+/* (Session 80, step 2) What game_tick (game.c) returns: a frame made and
+ * not yet shown -- the host shows it (what the frame hook did), sets the
+ * pads, and ticks again -- or the sequence ended, with no frame.
+ * (Session 81) Or the host is told something (g->event, an HzEvent), with
+ * no frame: it does its work for it and ticks again. */
+typedef enum {
+    HZ_TICK_FRAME = 0,
+    HZ_TICK_DONE,
+    HZ_TICK_EVENT
+} HzTick;
+
+/* (Session 81, step 2) What MainLoop_Title (game_begin_main) tells the
+ * host, each where a host has work of its own (a replay begun or saved,
+ * who plays the CPU, a check's counts):
+ *   TITLE  the loop's top ($41C): game_title_prepare and v_game_type 0
+ *          next, then the title, or the setup if it is skipped this time
+ *          round;
+ *   SETUP  the menus over (v_game_type -1 for the attract demo): the
+ *          setup next, the loading screen;
+ *   GAME   a game set up (or a demo): Game_Start next;
+ *   PASS   a pass of the frame loop over, the game going on (the next
+ *          pass next);
+ *   ENDED  the frame loop over (g->frame_exit says how): Game_Over next if
+ *          an HQ fell, else the loop's top. */
+typedef enum {
+    HZ_EVENT_NONE = 0,
+    HZ_EVENT_TITLE,
+    HZ_EVENT_SETUP,
+    HZ_EVENT_GAME,
+    HZ_EVENT_PASS,
+    HZ_EVENT_ENDED
+} HzEvent;
+
+/* game_begin_main's flags: no title the first time round (the setup at
+ * once: main.c's --skip-title, the nightmare's game, the checks' first
+ * game); once round the loop, then done (a network game: one game, no
+ * title). */
+enum {
+    HZ_MAIN_NO_TITLE = 1,
+    HZ_MAIN_ONCE     = 2
+};
+
+/* A sprite as the cartridge's RAM holds it (v_sprite_fixed, the order
+ * menu's radar, the loading screen's): its words in the VDP's sprite
+ * table format. The frame's list holds them in screen pixels (Sprite,
+ * video.h), each made so as it is added (sprite_from_ram). */
 typedef struct {
     u16 y;          /* +0: screen y + 128 */
     u16 size_link;  /* +2: size in bits 8-11 (width - 1 in 10-11, height
@@ -771,7 +841,7 @@ typedef struct {
     u16 cursor_x, cursor_y; /* m_cursor_x/y: the text cursor, in cells */
     u16 text_attr;          /* m_text_attr: in front, the palette line,
                                the font set's tile base */
-    u8  vdp_reg1;           /* m_vdp_reg1: b6 display on */
+    bool screen_on;         /* m_vdp_reg1's b6: the menus' screen on */
     u16 palette[64];        /* m_palette: CRAM as the menus want it */
     u16 target[64];         /* m_palette_target */
     s16 fade_level;         /* m_fade_level: 0 full colour to $1F black */
@@ -793,6 +863,42 @@ typedef struct {
     s16 scroll_x_b;         /* m_scroll_x_b/y_b: plane B's scroll, as */
     s16 scroll_y_b;         /*   M_ApplyScroll writes it (the game end) */
 } HzFront;
+
+/* (Session 80, docs/hackable.md step 2) Where the menus' sequences that
+ * run over several frames are, each stepped a frame at a time (HzRun):
+ * M_WaitFrames' frames to go; a fade's way (up from black or down to it)
+ * and whether it has made its first step; Menu_TitleFlow's phase and how
+ * it ended; the title's phase (title.c), a loop's count (the title's, the
+ * game end's, the endings'), the part of a pass it is in, Start pressed,
+ * how it ended (0, or -1: the song ran out); the options' page and phase
+ * (options.c); the game end's phase (game_end.c); the endings' (ending.c),
+ * the line of the story or the roll, the row it goes on, the blank rows
+ * to go and the phase after them, and a row of scroll's frames a line,
+ * its line and the frame in it. */
+typedef struct {
+    s16  frames;
+    bool fade_up;
+    bool fade_begun;
+    u8   flow_phase;
+    s8   flow_result;
+    u8   title_phase;
+    s16  n;
+    u8   part;
+    bool start;
+    s8   title_result;
+    u8   page;
+    u8   page_phase;
+    u8   end_phase;
+    u8   ending_phase;
+    s16  line;
+    s16  row;
+    s16  blank;
+    u8   blank_after;
+    u8   scroll_frames;
+    u8   scroll_line;
+    u8   scroll_frame;
+    u8   preview_mode;          /* --ending's v_options to put back */
+} HzFrontRun;
 
 /* A block's tile words (HzGame.blocks): bits of the nametable word that
  * the game also reads as the ground's. */
@@ -853,10 +959,6 @@ typedef struct {
 
 typedef struct HzGame HzGame;
 
-/* Where the 68k waits for VBlank the port hands the frame to its host:
- * render it, present it, pace it. Called with the frame complete. */
-typedef void (*HzFrameFn)(HzGame *g, void *user);
-
 /* (Session 61) A side's units (v_units1/2 on the 68k, 50 records each):
  * slots in chunks of HZ_UNIT_CHUNK records, so a record never moves once
  * made. Every game starts each side with HZ_SIDE_UNITS free slots, as the
@@ -895,8 +997,6 @@ struct HzGame {
     const HzAssets *assets;     /* the game's data, read at start-up */
     Video       *video;       /* the draw layer (src/core/video.h): the
                                  host's; NULL, a copy that never draws */
-    HzFrameFn    frame;
-    void        *frame_user;
 
     /* (Session 61) The units, a list a side. Outside the block each new
      * game zeroes (from sprite_count on): units_reset clears them. An
@@ -928,8 +1028,8 @@ struct HzGame {
      * first recorded). The port's: on the cartridge the record went out
      * as a password. */
     int          save_slot;
-    /* A test seam (tools/hz_front.c): options_run calls it as each page
-     * of the options screen starts (HzFrontPage, front.h). */
+    /* A test seam (tools/hz_front.c): options_run_step calls it as each
+     * page of the options screen starts (HzFrontPage, front.h). */
     void       (*front_probe)(HzGame *g, int page, void *user);
     void        *front_probe_user;
 
@@ -937,8 +1037,8 @@ struct HzGame {
      * calls it just before (after = false) and after each Mech_Update. */
     void       (*mech_probe)(HzGame *g, int p, bool after, void *user);
     void        *mech_probe_user;
-    /* Another (tools/hz_mech.c): game_frame calls it just before (after =
-     * false) and after Combat_Update. */
+    /* Another (tools/hz_mech.c): the frame loop's pass calls it just
+     * before (after = false) and after Combat_Update. */
     void       (*combat_probe)(HzGame *g, bool after, void *user);
     void        *combat_probe_user;
     /* Another, for the harnesses whose models don't follow the unit AI
@@ -954,8 +1054,8 @@ struct HzGame {
      * pad stays as it is (tools/hz_loop.c and the others whose models
      * don't follow it). */
     bool         cpus_frozen;
-    /* For the harnesses (game_new sets it): the loading screen's frames
-     * pass without being handed to the frame hook, so the harnesses'
+    /* For the harnesses (game_begin_new sets it): the loading screen's
+     * frames pass without being handed to the host, so the harnesses'
      * frames and pads count from Game_Start as before; the screen's state
      * is the same at the end. tools/hzdemo_check.py checks the frames. */
     bool         quick_load;
@@ -983,13 +1083,15 @@ struct HzGame {
      * hash leaves the display out (statehash.c). The host sets it;
      * game_init 0. */
     u8           net_player;
-    /* (Session 60) TURRETS has been on in this game (game_start, then
-     * every game_frame), so types 6 and 7 stay turrets (turrets_on) until
+    /* (Session 60) TURRETS has been on in this game (Game_Start, then
+     * every pass of the frame loop), so types 6 and 7 stay turrets
+     * (turrets_on) until
      * the next game: switching the patch off mid-game only stops the shop
      * selling them, and the ones bought fight on. */
     bool         turrets;
-    /* (Session 72) REPAIR likewise: on in this game (game_start, then
-     * every game_frame), so types 10 and 11 stay the repair truck and
+    /* (Session 72) REPAIR likewise: on in this game (Game_Start, then
+     * every pass of the frame loop), so types 10 and 11 stay the repair
+     * truck and
      * its mechanics (repair_on) until the next game. */
     bool         repair;
     /* And tools/hz_unitai.c's --game: unit_ai_update calls it on entry
@@ -1006,16 +1108,47 @@ struct HzGame {
     void       (*brain_probe)(HzGame *g, int p, void *user);
     void        *brain_probe_user;
 
-    /* 68k status register's interrupt mask: false after move #$2700,sr.
-     * VDP_WaitVBlank polls the VDP, so frames pass either way; only the
-     * interrupt handlers stop. */
-    bool interrupts_on;
+    /* (Session 81, step 2 item 5) The game's frame work on: each frame's
+     * start (VBlank's work) and the HUD strip's release (HBlank's) run in
+     * it. False where the 68k masks its interrupts (move #$2700,sr): its
+     * waits for a frame still make one, but that work is held, a frame's
+     * start owed (frame_start_owed) until game_frame_work_on lets it go. */
+    bool frame_work_on;
+
+    /* (Session 80, docs/hackable.md step 2) Where the sequences that run
+     * over several frames are: Palette_FadeInMap's frames so far; the
+     * pause's phase (game.c), and v_frame_counter as it was when Start
+     * paused, put back when the pause ends; the frame loop's pass, its
+     * phase, whether it reads the pads, how it ended (an HzLoopExit). */
+    u8  fade_in_map_frame;
+    u8  pause_phase;
+    u32 pause_saved_frames;
+    u8  frame_phase;
+    bool frame_read_pads;
+    u8  frame_exit;
+    u8  load_phase;             /* Game_LoadMap's (load.c) */
+    HzOverRun over;             /* Game_Over's finale */
+    HzFrontRun front_run;       /* the menus' (front.h) */
+    /* game_tick's: the sequence it runs (game_run_begin), whether its
+     * frames are the menus' (M_WaitVBlank) or the game's
+     * (VDP_WaitVBlank), whether the last tick ended on a frame, its VBlank
+     * still to come; game_setup_step's result (HzSetup). */
+    HzRun (*tick_step)(HzGame *g);
+    bool tick_menus;
+    bool tick_resume;
+    u8   setup_result;
+    /* (Session 81) MainLoop_Title's (game_begin_main): where it is, its
+     * flags, what it told the host last (HzEvent). */
+    u8   main_phase;
+    u8   main_flags;
+    u8   event;
 
     /* -- $FFF800 block ---------------------------------------------- */
     u16 hw_version;         /* v_hw_version: the version port's byte
                                (b7 overseas, b6 PAL); the title picks its
                                copyright line by b7 */
-    u16 vdp_reg1;           /* v_vdp_reg1: shadow of VDP register 1 */
+    bool screen_on;         /* v_vdp_reg1's b6 (VDP_DisplayOn): the
+                               game's waits for a frame make one */
     u8  joypad[2];          /* v_joypad1/2 ($FFF844/5): HZ_PAD_* bits */
     u16 split_screen;       /* v_split_screen */
     u8  options[4];         /* v_options: mode, difficulty, option2, map */
@@ -1047,9 +1180,6 @@ struct HzGame {
     HzPoint *view_camera[2];/* v_view_camera_a/b */
     s16 game_type;          /* v_game_type: negative = attract demo */
     u16 map;                /* v_map */
-    u16 sprite5_link;       /* v_sprite5_link: word HBlank writes */
-    u16 sprite5_link_next;  /* v_sprite5_link_next: Sprites_Build's, copied
-                               by VDP_UploadSprites */
     u16 split_enable;       /* v_split_enable */
     u32 frame_counter;      /* v_frame_counter; its low word is
                                v_frame_counter_lo, the demo's timeout */
@@ -1076,10 +1206,12 @@ struct HzGame {
     u16 load_abort;         /* v_load_abort: Start in a demo's load */
     HzSprite load_sprites[2];   /* v_load_sprites: VDP sprites 6 and 7 */
     u16 load_mech_frame;    /* v_load_mech_frame */
-    bool vblank_loading;    /* the VBlank stub's target is VBlank_Loading
-                               (LoadScreen_Start) until IntStubs_Install */
-    bool vblank_pending;    /* a VBlank came with interrupts masked: the
-                               VDP holds it until they're unmasked */
+    bool load_screen_on;    /* a frame's start work is the loading
+                               screen's (LoadScreen_Start's VBlank_Loading)
+                               until Game_LoadMap's end (IntStubs_Install) */
+    bool frame_start_owed;  /* a frame went by with the frame work held:
+                               its start runs when the work is let go (the
+                               VDP holds a VBlank until it's unmasked) */
 
     /* -- map data ($FF0000-$FF5FFF) ------------------------------------ */
     u16 blocks[HZ_BLOCKS][16];     /* v_map_blocks: 4 x 4 nametable words */
@@ -1101,16 +1233,19 @@ struct HzGame {
      * Game_LoadMap); game_init's memset stands in for it until that loop
      * is ported, so every field from here on starts a game at 0. */
     u16      sprite_count;      /* v_sprite_count */
-    u16      sprite_mux_phase;  /* v_sprite_mux_phase: 0..$B */
     s16      scroll_x[2];       /* v_scroll_x_a/b */
     s16      scroll_y[2];       /* v_scroll_y_a/b */
     s16      scroll_prev_x[2];  /* v_scroll_x_a/b_prev: as Map_ScrollUpdate
                                    last saw them */
     s16      scroll_prev_y[2];
     HzSprite sprite_fixed[10];  /* v_sprite_fixed: sprites 0-9. 6/7: P1/P2
-                                   in its own view, 8/9: in the rival's */
-    HzSprite sprite_list[HZ_SPRITE_LIST];   /* v_sprite_list: sprites
-                                               $A up, as built */
+                                   in its own view, 8/9: in the rival's
+                                   (0-5, the divider's on the cartridge,
+                                   unused: the layer draws it) */
+    u8       sprite_order[4];   /* (session 81) 6-9 in the order drawn, as
+                                   Sprites_Build's .link_order linked them */
+    Sprite   sprite_list[HZ_SPRITE_LIST];   /* v_sprite_list, as built, in
+                                               screen pixels */
     HzPost   posts[HZ_POST_CLEARED];
     HzPoint  camera[2];         /* v_camera1/2 */
     HzMech   mech[2];
@@ -1156,8 +1291,6 @@ struct HzGame {
                                        row B, column B */
     HzScrollQueue row_queue[2];     /* v_row_queue_a/b */
     HzScrollQueue col_queue[2];     /* v_col_queue_a/b */
-    u16           sprite_window;    /* v_sprite_window: the 68k keeps a
-                                       pointer; here the first entry */
     u16           blink_timer;      /* v_blink_timer: 0..$3F */
     HzSprite      radar_sprites[2][HZ_RADAR_SPRITES]; /* v_radar_sprites1/2 */
     u8            radar_buf[2][HZ_RADAR_IMAGE];       /* v_radar_buf1/2: the
@@ -1169,37 +1302,93 @@ struct HzGame {
 
 /* game.c */
 void game_init(HzGame *g, const HzAssets *assets, Video *video);
-void game_wait_vblank(HzGame *g);           /* VDP_WaitVBlank */
-void game_unmask(HzGame *g);                /* move.w #$2000,sr */
-void game_display_on(HzGame *g);            /* VDP_DisplayOn */
-void game_display_off(HzGame *g);           /* VDP_DisplayOff */
-void game_setup_mode(HzGame *g);            /* Game_SetupMode */
-void game_set_view_cameras(HzGame *g);      /* Game_SetViewCameras */
-void game_start(HzGame *g);                 /* Game_Start */
-u32  game_random(HzGame *g);                /* Random */
 
-/* MainLoop_Title from Game_SetupMode to Map_ScanOutposts: the mode, the
- * VDP, the map, the per-game RAM cleared. False for a map number past 7.
- * menu_title_flow (front.c) comes before it and fills in v_options;
- * the harnesses fill them in themselves. */
-bool game_new(HzGame *g);
+/* (Session 80, docs/hackable.md step 2) The game a frame at a time, as
+ * PS2's game_tick. A host begins what it wants run (the game_begin_s
+ * below); each game_tick runs it on from where the last stopped -- the
+ * VBlank of the frame the last tick made first -- until it has made a
+ * frame to show (HZ_TICK_FRAME: where VDP_WaitVBlank or M_WaitVBlank
+ * hands the frame over; the host shows it, sets the pads and ticks
+ * again) or has ended (HZ_TICK_DONE). A frame with the display off (or,
+ * in the menus, after a quit) is no frame to show: the tick goes on. The
+ * game calls no host back for a frame. Inside, a sequence over several
+ * frames is a phase machine: a _begin, and a _step that runs on until it
+ * has made a frame (HZ_RUN_FRAME, where the 68k waits for the VBlank) or
+ * is done; game_run_begin gives game_tick the outermost, with the kind
+ * of frame it makes. tick.h has the hosts' runs of a stage to its end. */
+void   game_run_begin(HzGame *g, HzRun (*step)(HzGame *g), bool menus);
+HzTick game_tick(HzGame *g);
+
+/* (Session 81, step 2) MainLoop_Title ($41C) as the game's own: the title
+ * and the options (MenuModule_Title), the setup and its loading screen,
+ * Game_Start, the passes of the frame loop, Game_Over to the title, and
+ * round again, until a quit (g->quit at the top, after the title, or
+ * after the setup) or a map past the eight (g->setup_result
+ * HZ_SETUP_NO_MAP; begun, it is HZ_SETUP_GAME). The host is told of each
+ * step on with an event (HzEvent): what main.c and the checks did
+ * between the stages they chained, they do there. flags: HZ_MAIN_*. */
+void   game_begin_main(HzGame *g, unsigned flags);
+/* front.c: M_WaitVBlank's frame is one for the host (the display on, no
+ * quit). */
+bool   front_frame_shown(const HzGame *g);
 
 /* MainLoop_Title's start ($41C): the music stopped and the effects, game
  * over cleared, interrupts masked, the split blocked. Then
- * MenuModule_Title, menu_title_flow: the title, and with Start the
- * options; -1 if the title ran out (the attract demo), else 0 (a game;
- * v_options as the options left them). */
+ * MenuModule_Title. */
 void game_title_prepare(HzGame *g);
-int  menu_title_flow(HzGame *g);            /* MenuModule_Title */
-/* MainLoop_Title after the menus, up to Game_Start (game_new is
- * game_title_prepare and this): a game ready to start, or a demo's load
- * aborted with Start (back to the title), or a map number past 7. */
+
+/* MainLoop_Title after the menus, up to Game_Start: a game ready to
+ * start, or a demo's load aborted with Start (back to the title), or a map
+ * number past 7. */
 typedef enum {
     HZ_SETUP_GAME,
     HZ_SETUP_ABORTED,
     HZ_SETUP_NO_MAP
 } HzSetup;
-HzSetup game_setup_after_title(HzGame *g);
+
+/* What a host runs, each begun here, then ticked until HZ_TICK_DONE.
+ * MenuModule_Title: the title, and with Start the options; how they
+ * ended in game_title_result: -1 if the title ran out (the attract demo),
+ * else 0 (a game, v_options as the options left them). The game set up
+ * after the title (false for a map number past 7; how it went in
+ * g->setup_result). For the harnesses, which set v_options themselves,
+ * the whole of MainLoop_Title but the menus, the loading screen's frames
+ * not handed over (game_begin_new; ready to start when g->setup_result is
+ * HZ_SETUP_GAME). Game_Start. A pass of Game_FrameLoop ($700), VBlank
+ * included, how it ended in g->frame_exit (Game_Start's first pass enters
+ * at Game_FrameLoopEntry, $704, past ReadJoypads: read_pads false).
+ * Game_Over to the title: the finale, MenuModule_GameEnd, the display
+ * off. MenuModule_GameEnd alone. The endings alone, for the side `human`
+ * (main.c's --ending: 1 P1, 2 P2; v_options put back after).
+ * Game_FrameLoop from VDP_WaitVBlank on (the frame, then the VBlank-time
+ * uploads), and a VDP_WaitVBlank alone (hz_shot's). */
+void game_begin_title(HzGame *g);
+int  game_title_result(const HzGame *g);
+bool game_begin_setup(HzGame *g);
+bool game_begin_new(HzGame *g);
+void game_begin_start(HzGame *g);
+void game_begin_pass(HzGame *g, bool read_pads);
+void game_begin_over(HzGame *g);
+void game_begin_game_end(HzGame *g);
+void game_begin_ending(HzGame *g, int human);
+void game_begin_frame_end(HzGame *g);
+void game_begin_wait(HzGame *g);
+
+void game_frame_work_on(HzGame *g);         /* move.w #$2000,sr */
+void game_display_on(HzGame *g);            /* VDP_DisplayOn */
+void game_display_off(HzGame *g);           /* VDP_DisplayOff */
+void game_setup_mode(HzGame *g);            /* Game_SetupMode */
+void game_set_view_cameras(HzGame *g);      /* Game_SetViewCameras */
+void  game_start_begin(HzGame *g);          /* Game_Start, a frame at a */
+HzRun game_start_step(HzGame *g);           /* time */
+u32  game_random(HzGame *g);                /* Random */
+
+/* MainLoop_Title from Game_SetupMode to Map_ScanOutposts, a frame at a
+ * time (game_begin_setup's): the mode, the VDP, the map, the per-game RAM
+ * cleared. False for a map number past 7 (and no step); else stepped
+ * until done, how it went in g->setup_result. */
+bool  game_setup_begin(HzGame *g);
+HzRun game_setup_step(HzGame *g);
 
 /* demo.c: the attract demo */
 void demo_setup_next(HzGame *g);            /* Demo_SetupNext */
@@ -1210,29 +1399,32 @@ void demo_play_input(HzGame *g);            /* Demo_PlayInput */
  * recorded and saved, saves.h, where the game made the password), and
  * with every map won on every difficulty the endings (ending.c,
  * Ending_Run). game_over.c: Game_Over, the HQ's destruction, then
- * menu_game_end; the caller goes back to the title. */
-void menu_game_end(HzGame *g);
-void ending_run(HzGame *g);                 /* Ending_Run */
-void ending_preview(HzGame *g, int human);  /* --ending: 1 P1, 2 P2 */
-void game_over(HzGame *g);                  /* Game_Over */
+ * MenuModule_GameEnd; the caller goes back to the title. A frame at a
+ * time (game_begin_game_end, game_begin_ending and game_begin_over run
+ * them). */
+void  menu_game_end_begin(HzGame *g);
+HzRun menu_game_end_step(HzGame *g);
+void  ending_run_begin(HzGame *g);          /* Ending_Run */
+HzRun ending_run_step(HzGame *g);
 
-/* Game_FrameLoop ($700): one pass, VBlank included. Game_Start's first
- * pass enters at Game_FrameLoopEntry ($704), past ReadJoypads
- * (read_pads false). */
-HzLoopExit game_frame(HzGame *g, bool read_pads);
+/* Game_FrameLoop ($700): one pass, VBlank included, a frame at a time
+ * (game_begin_pass's): begun, stepped until done, then g->frame_exit
+ * says how it ended. */
+void  game_frame_begin(HzGame *g, bool read_pads);
+HzRun game_frame_step(HzGame *g);
 
 void game_read_joypads(HzGame *g);          /* ReadJoypads */
-void game_check_pause(HzGame *g);           /* Game_CheckPause */
+
+/* Game_CheckPause a frame at a time: true when Start pauses the game,
+ * and then game_pause_step until it is done (the frame loop's pass). */
+bool  game_check_pause_begin(HzGame *g);
+HzRun game_pause_step(HzGame *g);
 HzLoopExit game_second_tick(HzGame *g);     /* Game_SecondTick */
 
 /* Game_FrameLoop from HUD_UpdateGauges up to VDP_WaitVBlank, as far as it
- * is ported: HUD_UpdateGauges, Sprites_Build, Map_ScrollUpdate,
- * Sprites_Multiplex. */
+ * is ported: HUD_UpdateGauges, Sprites_Build, Map_ScrollUpdate (and on
+ * the cartridge Sprites_Multiplex, gone: every sprite is drawn). */
 void game_frame_draw(HzGame *g);
-
-/* Game_FrameLoop from VDP_WaitVBlank on: the frame goes to the host, then
- * the VBlank-time uploads. */
-void game_frame_end(HzGame *g);
 
 /* mech.c */
 void mechs_init(HzGame *g);                 /* Mechs_Init (and Mech2_Init) */
@@ -1411,7 +1603,6 @@ void hud_flush_bars(HzGame *g);             /* HUD_FlushBars */
 
 /* sprites.c */
 void sprites_build(HzGame *g);              /* Sprites_Build */
-void sprites_multiplex(HzGame *g);          /* Sprites_Multiplex */
 void sprites_upload(HzGame *g);             /* VDP_UploadSprites */
 Sprite sprite_from_ram(const HzSprite *s);
 bool sprites_show_one(HzGame *g, const HzSprite *s);
@@ -1462,14 +1653,25 @@ void snd_pause(HzGame *g, u8 arg);          /* Snd_Pause */
 /* screen.c */
 void screen_start_game(HzGame *g);          /* VDP_Init */
 void screen_init_game(HzGame *g);           /* Screen_InitGame */
-void sprites_init_fixed(HzGame *g);         /* Sprites_InitFixed */
-void screen_divider(const HzGame *g, HzSprite out[6]);
-void palette_fade_in_map(HzGame *g);        /* Palette_FadeInMap */
+void  palette_fade_in_map_begin(HzGame *g); /* Palette_FadeInMap */
+HzRun palette_fade_in_map_step(HzGame *g);
 
-/* load.c */
-bool game_load_map(HzGame *g);              /* Game_LoadMap */
+/* load.c: Game_LoadMap, a frame at a time: false (and no step) for a map
+ * past the eight, else stepped until done. */
+bool  game_load_map_begin(HzGame *g);
+HzRun game_load_map_step(HzGame *g);
+
+/* game_over.c: (session 80) Game_Over up to the game's end, a frame at a
+ * time (game_begin_over runs these, then MenuModule_GameEnd and the
+ * display off). */
+void  game_over_begin(HzGame *g);
+HzRun game_over_step(HzGame *g);
+/* After game_over_begin, the whole of Game_Over to the title: the finale,
+ * then MenuModule_GameEnd (g->tick_menus says which is running), then
+ * the display off (game_begin_over's step; MainLoop_Title's too). */
+HzRun game_over_run_step(HzGame *g);
 void load_screen_start(HzGame *g);          /* LoadScreen_Start */
-void vblank_loading(HzGame *g);             /* VBlank_Loading */
+void load_screen_frame(HzGame *g);          /* VBlank_Loading */
 void map_init_anim_tiles(HzGame *g);        /* Map_InitAnimTiles */
 
 /* anim.c */

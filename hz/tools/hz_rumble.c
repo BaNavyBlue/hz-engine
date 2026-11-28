@@ -59,6 +59,7 @@
 
 #include "../src/core/video.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 #include "../src/game/rumble.h"
 
 #include <stdio.h>
@@ -404,6 +405,45 @@ static void on_frame(HzGame *g, void *user)
     }
 }
 
+/* (Session 81) What MainLoop_Title tells: the title's picks; main.c's
+ * new game (its rumble, and the check's own state); the counts. */
+static void on_event(HzGame *g, void *user)
+{
+    Run *r = user;
+    switch ((HzEvent)g->event) {
+        case HZ_EVENT_TITLE: {
+            r->title = true;
+            r->title_frames = 0;
+            r->title_idle = next_random(&r->choices) % 4 == 0;
+            break;
+        }
+        case HZ_EVENT_SETUP: {
+            r->title = false;
+            break;
+        }
+        case HZ_EVENT_GAME: {
+            if (g->game_type < 0) {
+                r->demos++;
+            } else {
+                r->games++;
+            }
+            rumble_reset(&r->rumble);
+            r->seen.primed = false;
+            g->sfx_asked = 0;
+            break;
+        }
+        case HZ_EVENT_ENDED: {
+            if (g->frame_exit == HZ_LOOP_GAME_OVER) {
+                r->overs++;
+            }
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
 static bool music_on(void *user)
 {
     Run *r = user;
@@ -454,8 +494,6 @@ int main(int argc, char **argv)
     HzGame *g = &game;
     video_init(&video);
     game_init(g, &assets, &video);
-    g->frame = on_frame;
-    g->frame_user = r;
     g->snd_music_on = music_on;
     g->snd_user = r;                /* music_on's; no snd_post: no sound */
     static const u32 FIXES[3] = { HZ_FIX_ALL, 0, HZ_FIX_DEFAULT };
@@ -475,49 +513,12 @@ int main(int argc, char **argv)
         g->options[1] = (u8)game_difficulty;
         g->options[3] = (u8)game_map;
     }
-    bool skip_title = true;
-
-    while (!g->quit) {                      /* main.c's MainLoop_Title */
-        r->title = true;
-        r->title_frames = 0;
-        r->title_idle = next_random(&r->choices) % 4 == 0;
-        game_title_prepare(g);
-        g->game_type = 0;
-        if (!skip_title) {
-            g->game_type = (s16)menu_title_flow(g);
-            if (g->quit) {
-                break;
-            }
-        }
-        skip_title = false;
-        r->title = false;
-        HzSetup setup = game_setup_after_title(g);
-        if (setup == HZ_SETUP_NO_MAP) {
-            fprintf(stderr, "hz_rumble: map %d doesn't load\n",
-                    g->options[3] & 7);
-            return 1;
-        }
-        if (setup == HZ_SETUP_ABORTED || g->quit) {
-            continue;
-        }
-        if (g->game_type < 0) {
-            r->demos++;
-        } else {
-            r->games++;
-        }
-        /* main.c's: a new game's rumble, and its own state here. */
-        rumble_reset(&r->rumble);
-        r->seen.primed = false;
-        g->sfx_asked = 0;
-        game_start(g);
-        HzLoopExit exit = game_frame(g, false);
-        while (exit == HZ_LOOP_ON) {
-            exit = game_frame(g, true);
-        }
-        if (exit == HZ_LOOP_GAME_OVER) {
-            r->overs++;
-            game_over(g);
-        }
+    /* main.c's MainLoop_Title, the first game with no title */
+    tick_main(g, HZ_MAIN_NO_TITLE, on_frame, on_event, r);
+    if (g->setup_result == HZ_SETUP_NO_MAP) {
+        fprintf(stderr, "hz_rumble: map %d doesn't load\n",
+                g->options[3] & 7);
+        return 1;
     }
     if (r->motors_side >= 0) {
         for (int s = 0; s < 2; s++) {

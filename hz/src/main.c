@@ -85,6 +85,7 @@
 #include "game/replay.h"
 #include "game/rumble.h"
 #include "game/statehash.h"
+#include "game/tick.h"
 #include "game/sysmenu.h"
 #include "net/net_client.h"
 #include "platform/platform.h"
@@ -1016,11 +1017,11 @@ static bool net_music_on(void *user)
 }
 
 /* The game's hooks into the host: main's, and run_net_game's again after
- * its game_init. */
+ * its game_init. (Session 80, docs/hackable.md step 2) Not the frame: the
+ * host runs the game a frame at a time (game/tick.h), each frame it makes
+ * on_frame's. */
 static void game_hooks(Host *h, HzGame *g, bool net)
 {
-    g->frame = on_frame;
-    g->frame_user = h;
     g->snd_music_on = net ? net_music_on : music_on;
     g->snd_user = h;
     g->snd_post = (h->audio != NULL) ? post_sound : NULL;
@@ -1084,6 +1085,51 @@ static void net_after_page(Host *h, HzGame *g)
  * the same game, drawn apart. (Session 66) Each machine knows its side
  * (HzGame.net_player) for its own end, YOU WIN or YOU LOSE, and both
  * HQs down in the same second is a draw (HZ_FIX_DRAW). */
+/* (Session 81) What MainLoop_Title (the game's, game_begin_main) tells
+ * the host. A game set up: here, a new game's rumble (session 54) and who
+ * plays the CPU's side (session 57: the Esc screen's CPU as this game
+ * starts; session 58: the nightmare AI for the NETWORK page's NIGHTMARE),
+ * which run_net_game set before its setup; then its recording begun
+ * (session 59). The frame loop over: the recording saved, and a network
+ * game's winner logged (session 66: P1, P2 or DRAW). */
+static void on_event(HzGame *g, void *user)
+{
+    Host *h = user;
+    switch ((HzEvent)g->event) {
+        case HZ_EVENT_GAME: {
+            if (h->net_game) {
+                replay_start(h, g, "network", h->net.side, h->net.rival);
+                break;
+            }
+            rumble_reset(&h->rumble);
+            g->sfx_asked = 0;
+            g->cpu_brain[0] = h->menu.cpu_brain;
+            g->cpu_brain[1] = h->menu.cpu_brain;
+            if (h->nightmare_game) {
+                g->cpu_brain[0] = HZ_BRAIN_NIGHTMARE;
+                g->cpu_brain[1] = HZ_BRAIN_NIGHTMARE;
+                h->nightmare_game = false;
+            }
+            replay_start(h, g, "local", -1, NULL);
+            break;
+        }
+        case HZ_EVENT_ENDED: {
+            HzLoopExit exit = (HzLoopExit)g->frame_exit;
+            replay_stop(h, g, exit);
+            if (h->net_game && exit == HZ_LOOP_GAME_OVER
+                && h->netlog != NULL) {
+                fprintf(h->netlog, "R %u %s\n", (unsigned)h->net.frame,
+                        g->winner == HZ_DRAW ? "DRAW"
+                        : g->winner != 0 ? "P2" : "P1");
+            }
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
 static void run_net_game(Host *h, HzGame *g, Video *video,
                          const HzAssets *assets)
 {
@@ -1114,27 +1160,9 @@ static void run_net_game(Host *h, HzGame *g, Video *video,
     g->sfx_asked = 0;
     g->cpu_brain[0] = HZ_BRAIN_ORIGINAL;    /* (session 57) no CPU here */
     g->cpu_brain[1] = HZ_BRAIN_ORIGINAL;
-    game_title_prepare(g);
-    g->game_type = 0;
-    HzSetup setup = game_setup_after_title(g);
-    if (setup == HZ_SETUP_GAME && !g->quit) {
-        replay_start(h, g, "network", c->side, c->rival);   /* (s. 59) */
-        game_start(g);
-        HzLoopExit exit = game_frame(g, false);
-        while (exit == HZ_LOOP_ON) {
-            exit = game_frame(g, true);
-        }
-        replay_stop(h, g, exit);
-        if (exit == HZ_LOOP_GAME_OVER) {
-            if (h->netlog != NULL) {
-                /* (session 66) who won: P1, P2 or DRAW */
-                fprintf(h->netlog, "R %u %s\n", (unsigned)c->frame,
-                        g->winner == HZ_DRAW ? "DRAW"
-                        : g->winner != 0 ? "P2" : "P1");
-            }
-            game_over(g);
-        }
-    }
+    /* MainLoop_Title once round, no title: the setup, the game, its end
+     * (on_event) */
+    tick_main(g, HZ_MAIN_NO_TITLE | HZ_MAIN_ONCE, on_frame, on_event, h);
     h->net_game = false;
     if (h->menu.open) {
         /* (Session 66) Open as the game ended: closed, for the title's
@@ -1593,57 +1621,25 @@ int main(int argc, char **argv)
     }
 
     if (ending != 0) {
-        ending_preview(&game, ending);
+        tick_ending(&game, ending, on_frame, &host);
     }
 
     int rc = 0;
     for (;;) {                          /* (session 56) */
-        while (!game.quit) {                    /* MainLoop_Title */
-            game_title_prepare(&game);
-            game.game_type = 0;
-            if (!skip_title) {
-                /* -1 when the title ran out: the attract demo */
-                game.game_type = (s16)menu_title_flow(&game);
-                if (game.quit) {
-                    break;
-                }
-            }
-            skip_title = false;
-            HzSetup setup = game_setup_after_title(&game);
-            if (setup == HZ_SETUP_NO_MAP) {
-                char text[64];
-                snprintf(text, sizeof text, "hz: map %d doesn't load",
-                         game.options[3] & 7);
-                platform_alert(text);
-                rc = 1;
-                break;
-            }
-            if (setup == HZ_SETUP_ABORTED || game.quit) {
-                continue;           /* Start on a demo's loading screen */
-            }
-            rumble_reset(&host.rumble);     /* (session 54) a new game's */
-            game.sfx_asked = 0;
-            /* (Session 57) Who plays the CPU's side: the Esc screen's CPU
-             * as this game starts; (session 58) the nightmare AI for the
-             * NETWORK page's NIGHTMARE. */
-            game.cpu_brain[0] = host.menu.cpu_brain;
-            game.cpu_brain[1] = host.menu.cpu_brain;
-            if (host.nightmare_game) {
-                game.cpu_brain[0] = HZ_BRAIN_NIGHTMARE;
-                game.cpu_brain[1] = HZ_BRAIN_NIGHTMARE;
-                host.nightmare_game = false;
-            }
-            replay_start(&host, &game, "local", -1, NULL);  /* (s. 59) */
-            game_start(&game);
-            HzLoopExit exit = game_frame(&game, false);
-            while (exit == HZ_LOOP_ON) {
-                exit = game_frame(&game, true);
-            }
-            replay_stop(&host, &game, exit);
-            if (exit == HZ_LOOP_GAME_OVER) {
-                game_over(&game);   /* the finale, WINNER, the results, the
-                                       win saved; then the title */
-            }
+        /* MainLoop_Title (session 81: the game's) until a quit: the title
+         * (with -1 in v_game_type when it ran out: the attract demo), the
+         * setup (Start on a demo's loading screen: the title again), the
+         * game, the finale, WINNER, the results, the win saved; then the
+         * title. What main.c does between: on_event. */
+        tick_main(&game, skip_title ? HZ_MAIN_NO_TITLE : 0, on_frame,
+                  on_event, &host);
+        skip_title = false;
+        if (game.setup_result == HZ_SETUP_NO_MAP) {
+            char text[64];
+            snprintf(text, sizeof text, "hz: map %d doesn't load",
+                     game.options[3] & 7);
+            platform_alert(text);
+            rc = 1;
         }
         /* (Session 56) Left for a network game: it, then the title
          * again. */

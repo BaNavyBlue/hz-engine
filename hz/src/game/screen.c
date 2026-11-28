@@ -9,7 +9,7 @@
 void screen_start_game(HzGame *g)
 {
     video_start_game(g->video, g->split_screen != 0);
-    g->vdp_reg1 = 0x8124;                               /* .window_h_set */
+    g->screen_on = false;                               /* .window_h_set */
     g->split_done = 1;                                  /* word $101 */
     g->hud_sprite_cut = 1;
     g->split_enable = 0;
@@ -19,9 +19,11 @@ void screen_start_game(HzGame *g)
  * (view A) all tile $5FF of line 1, layer B (view B) clear; in a split
  * screen view B's scroll (the layer $B0 right, 32 down) and the tile in
  * layer B's first 18 cells of rows 0-23; the window layer clear on view
- * B's side, but for the HUD strip's frame on its top 4 rows; the frame's
- * sprites the divider's six (sprites 0-5, written straight into the
- * table on the cartridge). */
+ * B's side, but for the HUD strip's frame on its top 4 rows; in a split
+ * screen the divider (on the cartridge six sprites, 0-5, written straight
+ * into the table and kept by Sprites_InitFixed: a column of 4 x 4 sprites
+ * of tile $500, line 1, in front, at x 144, y 32-223; wide screen parks
+ * them off the top); no sprites. */
 void screen_init_game(HzGame *g)
 {
     Video *v = g->video;
@@ -69,45 +71,9 @@ void screen_init_game(HzGame *g)
         }
     }
 
-    /* The divider's six sprites, the screen's (the loading screen's walk
-     * comes after them). */
-    HzSprite divider[6];
-    screen_divider(g, divider);
+    video_divider(v, g->split_screen != 0, cell_from_word(0xA500));
     video_sprites_begin(v);
-    for (int i = 0; i <= 5; i++) {
-        sprites_show_one(g, &divider[i]);
-    }
     video_sprites_game(v);
-}
-
-/* The divider between the views (Screen_InitGame's .divider, Sprites_
- * InitFixed's .entry): a column of six 4 x 4 sprites of tile $500 (line
- * 1, in front) at x 144, y 32-223, linked 1-6. Wide screen parks them at
- * y 0, off the top. */
-void screen_divider(const HzGame *g, HzSprite out[6])
-{
-    u16 y = 0x00A0;
-    u16 size_link = 0x0F01;
-    u16 dy = 0x20;
-    if (!g->split_screen) {
-        y = 0;
-        dy = 0;
-    }
-    for (int i = 0; i <= 5; i++) {
-        out[i].y = y;
-        out[i].size_link = size_link;
-        out[i].attr = 0xA500;
-        out[i].x = 0x0110;
-        y = (u16)(y + dy);
-        size_link = (u16)((size_link & 0xFF00) | ((size_link + 1) & 0xFF));
-    }
-}
-
-/* Sprites_InitFixed ($5A10): the divider's six into the RAM copy of
- * sprites 0-9, which VDP_UploadSprites hands over every frame. */
-void sprites_init_fixed(HzGame *g)
-{
-    screen_divider(g, g->sprite_fixed);
 }
 
 /* Palette_StepChannel ($956A): a 3-bit channel one step towards the
@@ -144,40 +110,41 @@ static void upload_line0(HzGame *g)
 
 /* Palette_FadeInMap ($943E): CRAM line 0 from black to the map's palette.
  * Eight steps towards each colour + 2 (colour 0: only in the first two),
- * then four towards the colour itself; one step every 4 frames. The
- * overshoot means the map comes up slightly bright and settles. */
-void palette_fade_in_map(HzGame *g)
+ * then four towards the colour itself; a step every 4 frames, uploaded
+ * after the first of them. The overshoot means the map comes up slightly
+ * bright and settles. (Session 80) A frame a step: 12 steps of 4 frames. */
+#define FADE_IN_MAP_STEPS     12
+#define FADE_IN_MAP_OVERSHOOT 8
+
+void palette_fade_in_map_begin(HzGame *g)
 {
     for (int i = 0; i < 16; i++) {                      /* .clear */
         g->map_palette[i] = 0;
     }
-    const u16 *target = g->assets->map[g->map].palette;   /* MapPalettes */
-
-    for (int step = 7; step >= 0; step--) {             /* .overshoot */
-        for (int i = 0; i < 16; i++) {                  /* .overshoot_entry */
-            u8 extra = 2;
-            if (step < 6 && i == 0) {
-                extra = 0;
-            }
-            g->map_palette[i] = step_entry(g->map_palette[i], target[i],
-                                           extra);
-        }
-        game_wait_vblank(g);
-        upload_line0(g);                                /* .overshoot_upload */
-        game_wait_vblank(g);
-        game_wait_vblank(g);
-        game_wait_vblank(g);
-    }
-
-    for (int step = 3; step >= 0; step--) {             /* .settle */
-        for (int i = 0; i < 16; i++) {                  /* .settle_entry */
-            g->map_palette[i] = step_entry(g->map_palette[i], target[i],
-                                           0);
-        }
-        game_wait_vblank(g);
-        upload_line0(g);                                /* .settle_upload */
-        game_wait_vblank(g);
-        game_wait_vblank(g);
-        game_wait_vblank(g);
-    }
+    g->fade_in_map_frame = 0;
 }
+
+HzRun palette_fade_in_map_step(HzGame *g)
+{
+    int f = g->fade_in_map_frame++;
+    if (f == FADE_IN_MAP_STEPS * 4) {
+        return HZ_RUN_DONE;
+    }
+    if (f % 4 == 1) {
+        upload_line0(g);                /* .overshoot_upload, .settle_upload */
+    }
+    if (f % 4 != 0) {
+        return HZ_RUN_FRAME;
+    }
+    int step = f / 4;               /* 0-7 .overshoot (the 68k's 7 to 0) */
+    const u16 *target = g->assets->map[g->map].palette;   /* MapPalettes */
+    for (int i = 0; i < 16; i++) {      /* .overshoot_entry, .settle_entry */
+        u8 extra = 0;
+        if (step < FADE_IN_MAP_OVERSHOOT && !(i == 0 && step >= 2)) {
+            extra = 2;
+        }
+        g->map_palette[i] = step_entry(g->map_palette[i], target[i], extra);
+    }
+    return HZ_RUN_FRAME;
+}
+

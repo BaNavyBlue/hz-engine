@@ -1,4 +1,4 @@
-/* hz_loop: Game_FrameLoop as ported (game_frame), pass by pass, with the
+/* hz_loop: Game_FrameLoop as ported (tick_pass), pass by pass, with the
  * controller ports scripted by VBlank and the state Game_SecondTick reads
  * poked at random between passes, logged for tools/hzloop_check.py.
  *
@@ -52,6 +52,7 @@
 
 #include "video_vdp.h"
 #include "../src/game/game.h"
+#include "../src/game/tick.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -515,17 +516,15 @@ int main(int argc, char **argv)
     vdp_reset(&vdp);
     video_vdp_watch(&g_cart, &g_video, &vdp);
     game_init(&game, &assets, &g_video);
-    game.frame = on_frame;
-    game.frame_user = &loop;
     game.options[0] = (u8)mode;
     game.options[1] = (u8)difficulty;
     game.options[3] = (u8)map;
-    if (!game_new(&game)) {
+    if (!tick_new(&game, on_frame, &loop)) {
         fprintf(stderr, "hz_loop: map %d doesn't load\n", map);
         fclose(f);
         return 1;
     }
-    game_start(&game);
+    tick_start(&game, on_frame, &loop);
     game.mech_probe = hide_pad;
     game.cpus_frozen = true;        /* the model doesn't follow the CPU's AI
                                        (make mechai) */
@@ -563,7 +562,7 @@ int main(int argc, char **argv)
         }
         fprintf(f, "S %X %X %X", pass, loop.vblanks, mask);
         put_state(f, &game);
-        exit = game_frame(&game, pass > 0);
+        exit = tick_pass(&game, pass > 0, on_frame, &loop);
         fprintf(f, "E %X %X %X", pass, (unsigned)exit, loop.vblanks);
         put_state(f, &game);
     }

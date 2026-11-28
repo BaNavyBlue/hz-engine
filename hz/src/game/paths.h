@@ -17,14 +17,14 @@ bool paths_next(const HzGame *g, const HzUnit *u, int post, s16 *wx,
 #define PATHS_NO_WAY 0xFFFFu
 u16 paths_cost(const HzGame *g, const HzUnit *u, int post);
 
-/* Every field the game's units could want made now (game_start, with
+/* Every field the game's units could want made now (Game_Start, with
  * PATHS): each goal (an outpost, an HQ) for each unit type that moves
  * (not the SUPPLY), so none is made in play. 3 a goal (6 where a current
  * makes speed matter). */
 void paths_prepare(const HzGame *g);
 
 /* (Session 72) REPAIR: the repair truck's field to each goal made now
- * (game_start, with REPAIR). */
+ * (Game_Start, with REPAIR). */
 void paths_prepare_repair(const HzGame *g);
 
 /* What the current under unit u (unit_push) adds to its velocity in its

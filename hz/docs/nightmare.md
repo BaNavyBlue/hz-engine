@@ -3147,3 +3147,104 @@ in 64 games:
 
 No hunter was sent and no strike given up in any of them; the changes
 there are the buys and pickups (`homepickups` 14 to 21 a game).
+
+## The ring round its outpost (session 81)
+
+The owner's game of 27 November against aa2698c (EISFREI, TYPE A, the
+AI P2) was won by the owner at 43:51, the mech destroyed 50 times to 9.
+The owner's side held 5 outposts from minute 3 and 6 from 19:24, when it
+took the AI's outpost 6 (1488, 1328), 560 px from the AI's HQ; round that
+outpost stood SAM-42s and GRM-34As, kept by SUPPLYs and a repair truck,
+and from 26:00 21 TAX-52s were put down 127 px from the HQ, which went from
+1006 HP to 278 by 34:00 and fell at 43:51. From 19:15 to 43:31 the mech was
+destroyed 42 times, 30 of them on foot, most a second or two after landing
+by a unit of that ring to fight it. Read from the recording, a cause was
+offered (`fight_spot` and `task_fight` weigh `DANGER_MISSILE` and never
+`DANGER_GUN`), with a fix to it; the owner: "fix the AI's fight landing
+like you said".
+
+**Not the guns.** The hit log of a takeover at 25:00 against the turtle
+(`HZ_ARENA_MECHHITS=1`, seed 1) has the mech destroyed 15 times in six
+minutes, all in fights, 14 of them on foot: 14 by the launchers'
+missiles from 66 to 194 px (11 GRM-34As', 3 SAM-42s'), one by a GRM-34A's
+gun. 9 were strikes at the ring (`pick_strike`: its GRM-34As, a SUPPLY, the repair
+truck), 6 fights `pick_threat` chose there. `fight_spot` did count the
+missiles' reach, but as one flag: a place under one launcher cost what a
+place under six did, and every place by the ring was under several. The
+strike give-up (`STRIKE_GIVEUP`) gave up two or three times in those six
+minutes (4 seeds), but it rests only within 320 px of the last death, and
+the ring's units stood up to 400 px apart; nor do the fights `pick_threat`
+chooses count for it. The trace's fight now says ` strike` or ` siege`
+(`nightmare_describe`), which told the two apart.
+
+**What it does now** (against a human; the turtle and the raider are kept
+without them, `TURTLE_PARAMS`; with no human playing, every game is as
+before: the 256 arena games against the CPU and the bot, every map and
+difficulty, both seats, game for game):
+
+- `FIGHT_COVER` 4. The launchers are counted (`n->missiles`, as the
+  strikes did): a unit is not fought or struck when every place to land by
+  it (`fight_spot`'s, 40 to 112 px off it; `spot_cover`) is reached by 4
+  or more of them, unless it is sent at the HQ or about to shoot it
+  (`hq_bound`: those are left to `NEST_WAIT`'s and the graves' rules); of
+  the places by one it fights, the one the fewest reach (`fight_spot`, 2000
+  a launcher where it was 2000 for any); and a fight whose best place
+  becomes so covered (the ring grew, the unit moved in) is left 30 s
+  (`nofight_add`, the N line's `covered`).
+- `FIGHT_GRAVE` 1. A unit the mech was destroyed fighting is not taken on
+  again for 30 s (`nofight`), unless it is sent at the HQ or about to
+  shoot it (the N line's `fightgraves`).
+
+**Four, not two.** With 2 (the first try) the ring was left alone as with
+4, but on ABGRUND (the game of 31 October, 06:53, the AI P1, taken over at
+30:00, 6 seeds) it lost 6 of 6 where it had lost 2: there its strikes at
+the nest by its HQ killed 4.5 of it a game; with 2 it bought 10.7 units a
+game to 33.8 and built no wall (12.8 wall units a game before). 3 the
+same (0-6-0); 4, 0-3-3. With the counting alone and no unit left
+(`FIGHT_COVER` 99) ABGRUND was as before (0-2-4) and the 27th too
+(0-3-33 against 0-1-35).
+
+**The 27th taken over** (19:30, 25:00 and 30:33, 12 seeds 90 frames
+apart, against the turtle), before and now: six minutes, the mech's deaths
+a game 8.1, 16.7 and 11.2 to 2.2, 2.0 and 1.4, and its outposts 2.0, 1.3
+and 1.0 to 3.1, 3.0 and 2.3; to the hour, 0-1-35 to 14-0-22, the deaths
+24.1, 42.2 and 38.1 to 11.0, 4.5 and 4.3.
+
+**Against the recordings** (`tools/hztakeover.py`: the 20 long games of
+the server's AI from 29 October to 27 November, each taken over at 12:00,
+20:00 and 30:00 where it lasted that long, 55 takeovers, 6 seeds 90 frames
+apart, to the hour): the AI's wins, losses and draws, the sum over the
+takeovers of the mech's deaths a game, and of its strikes:
+
+| | turtle | raider |
+|---|---|---|
+| before | 29-16-285, 500 deaths, 219 strikes | 1-39-290, 491, 204 |
+| with 2 (the first try) | 41-22-267, 216, 9 | |
+| now (4) | 42-18-270, 215, 17 | 0-36-294, 220, 19 |
+
+Against the turtle the results changed at 9 of the 55 takeovers: more
+won at 6 (the EISFREI games of 14 and 17 November at 20:00 and 30:00 and
+of 27 November at 30:00, VULKAN of 31 October (18:31) at 12:00), one
+fewer won at ABGRUND of 31 October (06:20) at 12:00, one lost more at
+ABGRUND of 31 October (06:53) at 30:00 and at EISFREI of 19 November at
+20:00. Against the raider (`--foe bot
+--foe-param raid=9`, `dog_guard=0 post_raid=0 nest_deaths=0`, and the
+switches off for it) fewer were lost at 4 (9 games: ABGRUND of 30 October
+(03:24) at 30:00, ABGRUND of 14 November at 20:00 and 30:00, EISFREI of 27
+November at 30:00) and more at 4 (6 games: EISFREI of 14 November (20:16)
+at 12:00, 0 to 3 of 6; EISFREI of 19 November at 12:00 and 30:00; VULKAN
+of 1 November at 30:00), and one fewer won (EISFREI of 17 November at
+20:00). Why the 14th at 12:00 went that way is not looked into.
+
+**From the start** (`tools/hzarena.py`, every map, TYPE A, 8 games a map,
+seeds from 101): against the turtle 35-0-29 as P1 and 35-0-29 as P2, as
+before; the bot against itself with the switches off on the other side
+9-12-43 as P1, 12-10-42 as P2 (10-12-42 with them on both). The rule
+seldom comes into those games (`covered` 0.0 to 3.9 a game, `fightgraves`
+0.0 to 0.4).
+
+**Not done: an answer to a ring.** The mech no longer feeds it, but
+nothing is sent against it either: a ring kept by SUPPLYs and a repair
+truck stays as long as the game. `HUNT_STRIKE`'s hunters go for SAM-42s
+within `STRIKE_R`; the GRM-34As shoot back at a tank and were left to the
+mech (session 77).

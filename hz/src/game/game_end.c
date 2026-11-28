@@ -100,7 +100,8 @@ static u32 divu(u32 d0, u16 by)
  * copies (d0 + 1) x 8 more bytes from past its RLE stream to the VRAM
  * after it, d0 the unpacker's leftover (the last long's low word: 0 for
  * this font), so 8 bytes ($00, $FF x 7) into tile $680, which nothing
- * draws. */
+ * draws. (Session 80) Up to the 121 frames here, the photo in
+ * winner_show_end; the frames are menu_game_end_step's. */
 static void winner_show(HzGame *g)
 {
     const HzMenuAssets *m = &g->assets->menu;
@@ -131,14 +132,11 @@ static void winner_show(HzGame *g)
         print_big(g, 0x0F, 1, (g->winner != 0) ? "2PLAYER" : "1PLAYER");
         print_big(g, 0x1E, 1, "SIDE");
     }
-    front_wait_frames(g, 0x78);
+}
 
-    do {
-        front_frame(g);
-        front_apply_scroll(g);
-        f->scroll_y_b = (s16)((f->scroll_y_b + 1) & 0xFF);
-    } while (f->scroll_y_b != 1 && !g->quit);
-
+static void winner_show_end(HzGame *g)
+{
+    const HzMenuAssets *m = &g->assets->menu;
     front_tiles(g, PHOTO_TILE, m->tank_photo2, sizeof m->tank_photo2);
     front_picture(g, LAYER_W, 0, 0, PHOTO_CELL, 40, 28);
 }
@@ -146,7 +144,8 @@ static void winner_show(HzGame *g)
 /* Winner_FadeIn ($54428): line 3 from black to WinnerPhotoPalette (the
  * photo's blues), 8 steps of 4 frames. QUIRK: its clear of line 3 writes
  * the line's first long eight times (no step); the line is MenuPalette's,
- * black throughout, either way. */
+ * black throughout, either way. (Session 80) The steps are
+ * menu_game_end_step's (GE_PHOTO_STEP, GE_PHOTO_WAIT). */
 static void winner_fade_in(HzGame *g)
 {
     HzFront *f = &g->front;
@@ -154,11 +153,6 @@ static void winner_fade_in(HzGame *g)
     f->palette[49] = 0;
     memcpy(&f->target[48], g->assets->menu.winner_photo_palette,
            sizeof g->assets->menu.winner_photo_palette);
-    for (int step = 0; step < 8 && !g->quit; step++) {
-        front_step_to_target(g);
-        front_wait_frames(g, 3);
-        front_upload_lines(g, 0x08);
-    }
 }
 
 /* Results_RecordWin ($546FE), its record: with exactly one side the
@@ -192,7 +186,9 @@ static void results_record_win(HzGame *g)
  * the frames by 60, which overflows past 65,535 s (18 hours 12 minutes):
  * the 68k's division is kept (divu). (With difficulty A complete the 68k
  * also unpacks the forest painting here, Ending_UnpackForest, for the
- * endings; the port has it from the assets.) */
+ * endings; the port has it from the assets.) (Session 80) Up to the wait
+ * here (its frames are menu_game_end_step's: GE_RESULTS), the wait's
+ * length results_wait's. */
 static void results_show(HzGame *g)
 {
     front_text_palette(g, 0);
@@ -245,40 +241,21 @@ static void results_show(HzGame *g)
     }
 
     results_record_win(g);
-
-    int wait = (g->win_record[0] == 0xFF) ? 0x708 : 0x2A30;
-    for (int i = 0; i <= wait && !g->quit; i++) {
-        if (front_wait_pad(g) & 0xFF) {
-            break;
-        }
-    }
-    snd_fade_music(g, 0);
 }
 
-/* MenuModule_GameEnd: M_Init (the menus' VDP set-up); the planes cleared,
- * the menu font and MenuPalette in; WINNER; the song -- $D with two
- * users, $E with two CPUs, against the computer $B if the human won and
- * $C if it lost, played once; the photo faded in, 60 frames, the
- * results; a fade to black, display off. Every map won on every
- * difficulty: the endings (ending_run). (Session 66) A network game's
- * own song here, as against the computer: $B for the winner's machine,
- * $C for the loser's; a draw $C. */
-void menu_game_end(HzGame *g)
+/* The wait's last frame: 0 to $2A30, or to $708 with every map won on
+ * difficulty A. */
+static int results_wait(const HzGame *g)
 {
-    HzFront *f = &g->front;
-    const HzMenuAssets *m = &g->assets->menu;
-    front_init(g);
-    front_display_off(g);
-    front_reset_scroll(g);
-    front_clear_sprites(g);
-    front_clear_planes(g);
-    front_tiles(g, 0x000, m->menu_font, sizeof m->menu_font);
-    memcpy(f->palette, m->menu_palette, sizeof f->palette);
-    front_set_target(g);
-    front_upload_palette(g);
+    return (g->win_record[0] == 0xFF) ? 0x708 : 0x2A30;
+}
 
-    winner_show(g);
-
+/* The game end's song: $D with two users, $E with two CPUs, against the
+ * computer $B if the human won and $C if it lost, played once. (Session
+ * 66) A network game's own song here, as against the computer: $B for
+ * the winner's machine, $C for the loser's; a draw $C. */
+static void game_end_song(HzGame *g)
+{
     u8 sides = g->options[0] & 3;
     u16 song = 0x0E;
     if (g->winner == HZ_DRAW) {
@@ -292,16 +269,149 @@ void menu_game_end(HzGame *g)
     }
     snd_play_music(g, song);
     snd_start_song(g, 0);
-    winner_fade_in(g);
-    front_wait_frames(g, 0x3B);
-    results_show(g);
+}
 
+/* MenuModule_GameEnd: M_Init (the menus' VDP set-up); the planes cleared,
+ * the menu font and MenuPalette in; WINNER; the song; the photo faded
+ * in, 60 frames, the results; the music faded, a fade to black, display
+ * off. Every map won on every difficulty: the endings (ending.c). */
+void game_begin_game_end(HzGame *g)
+{
+    menu_game_end_begin(g);
+    game_run_begin(g, menu_game_end_step, true);
+}
+
+/* (Session 80, docs/hackable.md step 2) Its phases: up to M_ClearPlanes'
+ * frame (the display off); WINNER up to its 121 frames; the scroll, a line
+ * a frame; the photo's fade in, a step and its 4 frames each; 60 frames;
+ * the results, until a button or the wait's end; the fade to black; the
+ * endings. */
+enum {
+    GE_START,
+    GE_PLANES,
+    GE_WINNER_WAIT,
+    GE_WINNER_SCROLL,
+    GE_PHOTO_STEP,
+    GE_PHOTO_WAIT,
+    GE_WAIT,
+    GE_RESULTS,
+    GE_RESULTS_PAD,
+    GE_FADE,
+    GE_ENDING
+};
+
+void menu_game_end_begin(HzGame *g)
+{
+    g->front_run.end_phase = GE_START;
+}
+
+/* The results' end: the music faded, the fade to black begun. */
+static void results_end(HzGame *g)
+{
+    snd_fade_music(g, 0);
     front_set_target(g);
-    front_fade_to_black(g);
-    front_display_off(g);
-    if (g->win_record[0] == 0xFF && g->win_record[1] == 0xFF
-        && g->win_record[2] == 0xFF && g->win_record[3] == 0xFF
-        && !g->quit) {
-        ending_run(g);
+    front_fade_to_black_begin(g);
+    g->front_run.end_phase = GE_FADE;
+}
+
+HzRun menu_game_end_step(HzGame *g)
+{
+    HzFront *f = &g->front;
+    HzFrontRun *r = &g->front_run;
+    const HzMenuAssets *m = &g->assets->menu;
+    for (;;) {
+        switch (r->end_phase) {
+        case GE_START:
+            front_init(g);
+            front_display_off(g);
+            front_reset_scroll(g);
+            front_clear_sprites(g);
+            r->end_phase = GE_PLANES;
+            return HZ_RUN_FRAME;
+        case GE_PLANES:
+            front_clear_planes_after(g);
+            front_tiles(g, 0x000, m->menu_font, sizeof m->menu_font);
+            memcpy(f->palette, m->menu_palette, sizeof f->palette);
+            front_set_target(g);
+            front_upload_palette(g);
+            winner_show(g);
+            front_wait_frames_begin(g, 0x78);
+            r->end_phase = GE_WINNER_WAIT;
+            break;
+        case GE_WINNER_WAIT:
+            if (front_wait_frames_step(g) == HZ_RUN_FRAME) {
+                return HZ_RUN_FRAME;
+            }
+            r->end_phase = GE_WINNER_SCROLL;
+            return HZ_RUN_FRAME;
+        case GE_WINNER_SCROLL:
+            front_apply_scroll(g);
+            f->scroll_y_b = (s16)((f->scroll_y_b + 1) & 0xFF);
+            if (f->scroll_y_b != 1 && !g->quit) {
+                return HZ_RUN_FRAME;
+            }
+            winner_show_end(g);
+            game_end_song(g);
+            winner_fade_in(g);
+            r->n = 0;
+            r->end_phase = GE_PHOTO_STEP;
+            break;
+        case GE_PHOTO_STEP:
+            if (r->n < 8 && !g->quit) {
+                front_step_to_target(g);
+                front_wait_frames_begin(g, 3);
+                r->end_phase = GE_PHOTO_WAIT;
+            } else {
+                front_wait_frames_begin(g, 0x3B);
+                r->end_phase = GE_WAIT;
+            }
+            break;
+        case GE_PHOTO_WAIT:
+            if (front_wait_frames_step(g) == HZ_RUN_FRAME) {
+                return HZ_RUN_FRAME;
+            }
+            front_upload_lines(g, 0x08);
+            r->n++;
+            r->end_phase = GE_PHOTO_STEP;
+            break;
+        case GE_WAIT:
+            if (front_wait_frames_step(g) == HZ_RUN_FRAME) {
+                return HZ_RUN_FRAME;
+            }
+            results_show(g);
+            r->n = 0;
+            r->end_phase = GE_RESULTS;
+            break;
+        case GE_RESULTS:
+            if (r->n <= results_wait(g) && !g->quit) {
+                r->end_phase = GE_RESULTS_PAD;
+                return HZ_RUN_FRAME;
+            }
+            results_end(g);
+            break;
+        case GE_RESULTS_PAD:
+            if (front_read_pads(g) & 0xFF) {
+                results_end(g);
+            } else {
+                r->n++;
+                r->end_phase = GE_RESULTS;
+            }
+            break;
+        case GE_FADE:
+            if (front_fade_step(g) == HZ_RUN_FRAME) {
+                return HZ_RUN_FRAME;
+            }
+            front_display_off(g);
+            if (g->win_record[0] == 0xFF && g->win_record[1] == 0xFF
+                && g->win_record[2] == 0xFF && g->win_record[3] == 0xFF
+                && !g->quit) {
+                ending_run_begin(g);
+                r->end_phase = GE_ENDING;
+                break;
+            }
+            return HZ_RUN_DONE;
+        default:                                /* GE_ENDING */
+            return ending_run_step(g);
+        }
     }
 }

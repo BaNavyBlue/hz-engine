@@ -181,6 +181,30 @@ but the display that a split-screen game hashes did.
   those are.
 * **Identity:** as before. Only this repository's own name is found.
 
+### The sync of 2026-11-27 (v0.1.2)
+
+From the private tree's commit "Step 2 of the hackable plan: the frame
+model; step 1's rest (every sprite drawn, NET_GAME_CODE 14); the nightmare
+AI keeps off a ring of launchers". The game's frame is its own (the title
+loop's flow, and the VBlank and HBlank handlers as what they come to in a
+frame), the layer draws every sprite and the split's divider, and the
+nightmare AI no longer lands to fight under a ring of SAM-42s and GRM-34As
+(`hz/docs/nightmare.md`, "The ring round its outpost"). `NET_GAME_CODE` is
+14: the display a split-screen network game hashes changed again.
+
+* **The sync:** 284 files, the author's name put as "the owner" 214
+  times, and nothing left for its checks to refuse.
+* **The files:** `hz_assets IMAGE` made 144. With the port's five, 149 of
+  149 are as proved (`tools/assets.sha256`, unchanged). The network id is
+  `923A9F53585E4FF3`, the same as the private commit's own assets and the
+  server's installed ones give.
+* **The build:** `hz`, `hz_headless`, `hz_assets` and `hz_gameid` build
+  with no warnings (MSYS2 UCRT64, Q v1.5.4). The private commit built on
+  Linux (gcc, glibc) with no warnings.
+* **The leak check:** 300 files, 8 flagged, the same eight as v0.1.1's.
+  Kept.
+* **Identity:** as before. Only this repository's own name is found.
+
 ## Not yet run or seen
 
 * The windowed game on Linux (a display, the drop and the file dialog)
@@ -196,7 +220,8 @@ but the display that a split-screen game hashes did.
    been seen to pass and the owner says (the release job's `needs`, its
    downloads and its notes).
 3. Each push of the private tree: sync from it, prove again (this file's
-   list), then the next tag. `v0.1.1` was the first (2026-11-27).
+   list), then the next tag. `v0.1.1` was the first (2026-11-27), `v0.1.2`
+   the next (the same day).
 
 ## Open
 

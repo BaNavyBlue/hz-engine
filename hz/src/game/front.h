@@ -53,7 +53,6 @@ void front_display_on(HzGame *g);           /* M_DisplayOn */
 void front_display_off(HzGame *g);          /* M_DisplayOff */
 void front_reset_scroll(HzGame *g);         /* M_ResetScroll */
 void front_clear_sprites(HzGame *g);        /* M_ClearSprites */
-void front_clear_planes(HzGame *g);         /* M_ClearPlanes */
 void front_apply_scroll(HzGame *g);         /* M_ApplyScroll: plane B */
 void front_blank_planes(HzGame *g);         /* M_BlankPlanes */
 
@@ -70,12 +69,21 @@ void front_picture(HzGame *g, LayerId layer, int col, int row, u16 first,
                    int across, int rows);
 void front_fill(HzGame *g, LayerId layer, int row, int rows, u16 word);
 
-/* A frame: M_WaitVBlank and its "if on" kin. With the display on the
- * finished frame goes to the host; with it off nothing waits. */
-void front_frame(HzGame *g);
 u16  front_read_pads(HzGame *g);            /* M_ReadJoypads: new presses */
-u16  front_wait_pad(HzGame *g);             /* M_WaitFramePad(2) */
-void front_wait_frames(HzGame *g, int n);   /* M_WaitFrames: n + 1 */
+
+/* (Session 80, docs/hackable.md step 2) The menus' sequences a frame at a
+ * time, as the game's (HzRun): a step returns HZ_RUN_FRAME where the 68k
+ * calls M_WaitVBlank or its kin (M_WaitFramePad: the frame, then
+ * front_read_pads), and game_tick hands the frame to the host if the
+ * display is on (front_frame_shown). M_WaitFrames (n + 1 frames) and the
+ * fades so, and M_ClearPlanes in two: its frame, then
+ * front_clear_planes_after. */
+void  front_wait_frames_begin(HzGame *g, int n);
+HzRun front_wait_frames_step(HzGame *g);
+void  front_fade_to_black_begin(HzGame *g);
+void  front_fade_from_black_begin(HzGame *g);
+HzRun front_fade_step(HzGame *g);
+void  front_clear_planes_after(HzGame *g);
 
 /* Text in the window plane, in the menu font: ' ' stands for the font's
  * blank ('@'). */
@@ -99,8 +107,6 @@ void front_clear_palette(HzGame *g);        /* M_ClearPalette */
 void front_set_target(HzGame *g);           /* M_PaletteSetTarget */
 void front_step_to_target(HzGame *g);       /* M_PaletteStepToTarget */
 void front_apply_fade(HzGame *g);           /* M_PaletteApplyFade */
-void front_fade_to_black(HzGame *g);        /* M_FadeToBlack */
-void front_fade_from_black(HzGame *g);      /* M_FadeFromBlack */
 void front_play_sfx(HzGame *g, u8 sfx);     /* M_Snd_PlaySfxNow + FlushSfx */
 
 /* -- title.c, options.c ------------------------------------------------ */
@@ -121,8 +127,16 @@ typedef enum {
     PAGE_DONE           /* back to MainLoop_Title: the game */
 } HzFrontPage;
 
-int  title_run(HzGame *g);                  /* Title_Run: 0, or -1 */
-void options_run(HzGame *g);                /* Options_Run */
+/* Title_Run (0, or -1), Options_Run and Menu_TitleFlow, a frame at a
+ * time: begun, stepped until done; the title's end in
+ * g->front_run.title_result, the flow's in .flow_result
+ * (game_title_result). */
+void  title_run_begin(HzGame *g);
+HzRun title_run_step(HzGame *g);
+void  options_run_begin(HzGame *g);
+HzRun options_run_step(HzGame *g);
+void  menu_title_flow_begin(HzGame *g);
+HzRun menu_title_flow_step(HzGame *g);
 
 /* A saved game loaded as CONT loads it (what an accepted password did in
  * Password_Check): the record, the sides from the side the human played
